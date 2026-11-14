@@ -466,7 +466,7 @@ workloads. After a pass to close the gap with Roda:
 generic parts of the telemetry TMDB's apps share today, reading Reprise's own env keys rather than Sinatra's.
 - **`Reprise::Telemetry::Requests`:** counts requests (`app.requests`, by method, status, status class, route pattern,
   and the app's labels), times them (`app.request.duration`, by status class), and logs a line per request (sampled,
-  except 5xx) with the query's secret-looking parameters filtered. Where the server supports `rack.response_finished`
+  except 5xx; at info, warn for a 4xx, error for a 5xx) with the query's secret-looking parameters filtered. Where the server supports `rack.response_finished`
   (Falcon does), the line is written once the response is sent, after the request's span has ended. Below the tracer it
   still carries the trace id, so the separate trace-id middleware isn't needed.
 - **`Reprise::Telemetry::StallDetector`:** a heartbeat and a watchdog thread per event loop log when the loop is blocked,

@@ -165,11 +165,17 @@ RSpec.describe Reprise::Telemetry do
       end
     end
 
-    it "logs through Console by default" do
+    it "logs through Console by default, at a level by status" do
       app = described_class.new(movies.tap(&:finalize!))
       expect(Console).to receive(:info).with(app, "GET /movie/550 200", hash_including(route: "/movie/:id"))
+      expect(Console).to receive(:warn).with(app, "GET /nope 404", hash_including(status: "404"))
+      expect(Console).to receive(:error).with(app, "GET /boom 500", hash_including(error: "ArgumentError"))
 
-      app.call(env_for("/movie/550"))
+      ["/movie/550", "/nope", "/boom"].each { app.call(env_for(it)) }
+    end
+
+    it "gives the log level for a status" do
+      expect([200, 304, 404, 499, 500, "503"].map { described_class.log_level(it) }).to eq([:info, :info, :warn, :warn, :error, :error])
     end
 
     it "counts an exception that escapes as a 500, and re-raises it" do

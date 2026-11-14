@@ -48,7 +48,7 @@ bundle exec reprise routes -f compact -g movie # "file:line VERB pattern" lines,
 ## Telemetry
 
 Opt-in, and not loaded by `require "reprise"`. Request metrics (`app.requests`, `app.request.duration`) and an access
-log line per request, labelled by route pattern; a stall detector that logs when the event loop is blocked, naming the
+log line per request, labelled by route pattern (at info, warn for a 4xx, and error for a 5xx); a stall detector that logs when the event loop is blocked, naming the
 requests in flight; and the loop's lag (`reactor.lag`). Metrics go through the OpenTelemetry metrics API, and are no-ops
 until you configure an SDK meter provider. Logs go through Console.
 

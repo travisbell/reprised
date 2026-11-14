@@ -24,8 +24,9 @@ module Reprise
     # The log line is written for +log_sample+ percent of requests, and for every 5xx. Where the server supports
     # rack.response_finished (Falcon does), it's written once the response has been sent, after the request's span has
     # ended, so a log-triggered tail sampler doesn't keep every trace. Put the middleware below OpenTelemetry's Rack
-    # middleware for the line to carry the request's trace_id. +log+ may be false (metrics only) or a callable taking
-    # (env, message, fields) to write the line itself.
+    # middleware for the line to carry the request's trace_id. It's logged at info, warn for a 4xx, and error for a 5xx
+    # (Requests.log_level). +log+ may be false (metrics only) or a callable taking (env, message, fields) to write the
+    # line itself.
     #
     # In config.ru it records what every middleware below it answers; installed with the Telemetry plugin, what the app
     # answers.
@@ -35,6 +36,15 @@ module Reprise
       MAX_QUERY_LENGTH = 500
       MAX_USER_AGENT_LENGTH = 200
       HISTOGRAM_LABELS = ["status_class"].freeze
+
+      # The Console level of a request's log line: info, warn for a 4xx, or error for a 5xx.
+      def self.log_level(status)
+        status = status.to_i
+        if status >= 500 then :error
+        elsif status >= 400 then :warn
+        else :info
+        end
+      end
 
       def initialize(
         app,
@@ -93,9 +103,9 @@ module Reprise
         fields = log_fields(env, status, headers, duration, labels, span, error)
         message = "#{labels["method"]} #{env["PATH_INFO"]} #{status}"
         if (callbacks = env["rack.response_finished"])
-          callbacks << ->(*) { write(env, message, fields) }
+          callbacks << ->(*) { write(env, status, message, fields) }
         else
-          write(env, message, fields)
+          write(env, status, message, fields)
         end
       rescue => record_error
         Console.error(self, "Couldn't record request", exception: record_error)
@@ -136,11 +146,11 @@ module Reprise
         fields
       end
 
-      def write(env, message, fields)
+      def write(env, status, message, fields)
         if @log.respond_to?(:call)
           @log.call(env, message, fields)
         elsif @log
-          Console.info(self, message, **fields)
+          Console.public_send(Requests.log_level(status), self, message, **fields)
         end
       end
 
