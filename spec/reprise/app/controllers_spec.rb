@@ -145,6 +145,18 @@ RSpec.describe "Controllers" do
     expect { app.finalize! }.to output(%r{before /teams/\* in .* matches GET /teams/search in .*runs only for its own}m).to_stderr
   end
 
+  it "skips the overlap check when no controller has filters" do
+    search = controller { get("/teams/search") { "search" } }
+    mock_app do
+      set :filter_overlap, :raise
+      before("/teams/*") { "the app's filters run for every route, so they can't overlap" }
+      mount search
+    end
+
+    expect(app).not_to receive(:sample_path)
+    expect { app.finalize! }.not_to raise_error
+  end
+
   it "raises about overlapping filters when filter_overlap is :raise" do
     teams = controller { before("/teams/*") { halt 404 } }
     search = controller { get("/teams/search") { "search" } }

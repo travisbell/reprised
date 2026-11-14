@@ -164,6 +164,8 @@ module Reprise
         mode = settings.filter_overlap
         raise ArgumentError, "filter_overlap must be one of #{FILTER_OVERLAP}" unless FILTER_OVERLAP.include?(mode)
         return if mode == :ignore
+        # Only a controller's filters are scoped, so with none there's nothing to check (and nothing to expand).
+        return unless @filters.values.flatten.any? { !(it.owner <= App) }
 
         overlaps = routes.flat_map do |route|
           next [] unless (path = sample_path(route.path))
