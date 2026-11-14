@@ -32,9 +32,11 @@ namespace :spike do
     end
   end
 
-  desc "Compare Reprise with the oracle's results (MATCHER=index|trie)"
+  desc "Compare Reprise with the oracle's results, at the router and app levels (MATCHER=index|trie)"
   task :diff do
-    APPS.each { |app| ruby("spike/differential.rb", app, ENV.fetch("MATCHER", "index")) }
+    APPS.each do |app|
+      ["router", "app"].each { |level| ruby("spike/differential.rb", app, ENV.fetch("MATCHER", "index"), level) }
+    end
   end
 
   desc "Benchmark routing in Sinatra and Reprise"

@@ -13,7 +13,7 @@ bundle exec rake spike:bench    # Sinatra vs Reprise routing cost
 |---|---|---|---|
 | Extract | `extract_routes.rb` | the app's own (it boots the app) | `fixtures/<app>.routes.json`: every route and filter, in Sinatra's order, with options and source |
 | Oracle | `oracle/sinatra_oracle.rb` | `oracle/Gemfile` (Sinatra 4.2.1, Mustermann 3.1.1) | `results/<app>.oracle.jsonl`: Sinatra's decision for each generated request |
-| Diff | `differential.rb` (with `table.rb`) | this gem's (Mustermann 4) | differences, grouped; exits 1 if any |
+| Diff | `differential.rb` (with `table.rb`, `app_table.rb`) | this gem's (Mustermann 4) | differences, grouped; exits 1 if any. Runs at two levels: the router directly, and a `Reprise::App` built from the table, called through Rack |
 | Bench | `oracle/bench_sinatra.rb`, `../bench/routing.rb` | both | µs per request |
 
 The oracle runs in its own bundle because Sinatra 4.2 requires Mustermann ~> 3.0.
@@ -31,8 +31,8 @@ tmdb-web. The corpus reaches every tmdb-api route and 1,145 of tmdb-web's 1,146.
 
 ## Results (2026-11-14)
 
-With the index matcher, there are **no unexplained differences** in either app. The one known difference is
-intended:
+With the index matcher, there are **no unexplained differences** in either app, at either level. At the app level,
+status, route, params, content type, and the filters run all match. The one known difference is intended:
 
 - **Filter captures don't leak.** Sinatra's `process_route` restores the params a filter's pattern added, but not
   `params["captures"]`, so a regexp filter's captures leak into the route after it (2,460 tmdb-web requests, from one
@@ -51,7 +51,16 @@ Routing cost per request, with route and filter bodies that do nothing:
 | tmdb-api, one request per route (243) | 79.1 µs | ~69 µs (RouteIndex: 42.1 total) | **8.9 µs** | 7.3 µs |
 | tmdb-api, 404s (200) | 50.3 µs | ~40 µs (RouteIndex: 68.6 total) | **5.3 µs** | 5.6 µs |
 
-The Reprise columns time routing alone: finding the route with its conditions, plus the before and after filters
+A full Rack call through each framework (2026-11-14, after phase 1):
+
+| | Sinatra 4.2.1 | Reprise::App |
+|---|---|---|
+| tmdb-web, one request per route | 220.3 µs | **39.9 µs** |
+| tmdb-web, 404s | 147.1 µs | **20.8 µs** |
+| tmdb-api, one request per route | 80.5 µs | **23.0 µs** |
+| tmdb-api, 404s | 53.1 µs | **19.5 µs** |
+
+The router columns in the first table time routing alone: finding the route with its conditions, plus the before and after filters
 that apply. The Sinatra columns time a full Rack call, so subtracting the baseline approximates its routing share.
 Sampling one request per route weights routes defined late as heavily as routes defined early. That's not the shape
 of production traffic, so these figures show relative cost and aren't a forecast of production latency.

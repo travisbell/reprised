@@ -2,18 +2,29 @@
 
 A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed for Falcon and Async.
 
-**Status:** early. Phase 0 (routing parity with Sinatra on TMDB's route tables) is done. The app and controller layer
-comes next. See [PLAN.md](PLAN.md).
+**Status:** early. The core app works and matches Sinatra 4.2's routing and dispatch on two production route tables.
+Controllers with private helpers, rendering (ERB, ActionView, Phlex), and Async features come next. See
+[PLAN.md](PLAN.md).
 
 ```ruby
 require "reprise"
 
-router = Reprise::Router.new
-router.add("GET", "/movie/:id", :show)
-router.add("GET", "/movie/new", :new)
-router.finalize!
+class App < Reprise::App
+  before { @user = User.from_session(session) }
 
-router.find("GET", "/movie/new") { |route, params| route == :new } # => [:new, {}]
+  get "/movie/:id", provides: :json do |id|
+    json(Movie.find(id))
+  end
+
+  get "/movie/:id" do
+    halt 404 unless (movie = Movie.find(params[:id]))
+    "<h1>#{movie.title}</h1>"
+  end
+
+  error(Movie::NotFound) { not_found "No such movie" }
+end
+
+run App # config.ru
 ```
 
 ## Development
@@ -22,7 +33,7 @@ router.find("GET", "/movie/new") { |route, params| route == :new } # => [:new, {
 bundle install
 bundle exec rspec
 bundle exec rubocop
-bundle exec rake spike   # routing parity with Sinatra on TMDB's route tables, see spike/README.md
+bundle exec rake spike   # routing and dispatch parity with Sinatra, see spike/README.md
 ```
 
 Requires Ruby 4.0.

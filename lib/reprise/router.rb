@@ -69,6 +69,7 @@ module Reprise
     end
 
     def lanes = @lanes.keys
+    def lane?(lane) = @lanes.key?(lane)
 
     # Yields (value, params) for every pattern in +lane+ that matches +path+, in definition order.
     def each(lane, path, &block)

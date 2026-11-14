@@ -4,17 +4,23 @@
 # request where Reprise would choose a different route, different params, a different content type, or run
 # different filters.
 #
-#   bundle exec ruby spike/differential.rb tmdb-web [index|trie]
+#   bundle exec ruby spike/differential.rb tmdb-web [index|trie] [router|app]
+#
+# The router level asks Reprise::Router directly. The app level replays the table into a Reprise::App and sends each
+# request through Rack, so dispatch (conditions, filters, params, statuses) is compared too.
 #
 # Filters are compared unscoped (every matching filter, as Sinatra runs them). Owner scoping is layered on later.
 
 require_relative "table"
+require_relative "app_table"
 
-app = ARGV.fetch(0) { abort("usage: differential.rb tmdb-web|tmdb-api [index|trie]") }
+app = ARGV.fetch(0) { abort("usage: differential.rb tmdb-web|tmdb-api [index|trie] [router|app]") }
 matcher = ARGV.fetch(1, "index").to_sym
-table = Spike::Table.load(app, matcher:)
+level = ARGV.fetch(2, "router")
+table = level == "app" ? Spike::AppTable.load(app, matcher:) : Spike::Table.load(app, matcher:)
 oracle_lines = File.foreach("#{Spike::ROOT}/results/#{app}.oracle.jsonl")
-accepts = JSON.parse(oracle_lines.first).dig("meta", "accepts").transform_values { Reprise::Negotiation.parse_accept(it) }
+accepts = JSON.parse(oracle_lines.first).dig("meta", "accepts")
+accepts = accepts.transform_values { Reprise::Negotiation.parse_accept(it) } unless level == "app"
 
 mismatches = Hash.new { |h, k| h[k] = [] }
 known = Hash.new(0)
@@ -45,7 +51,7 @@ end
 elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 describe = ->(index) { index ? table.records.fetch(index).describe : "404" }
 
-puts format("%s (%s matcher): %d requests compared in %.1fs", app, matcher, total, elapsed)
+puts format("%s (%s matcher, %s level): %d requests compared in %.1fs", app, matcher, level, total, elapsed)
 known.each { |reason, count| puts "  known: #{reason} (#{count} requests)" }
 puts "  no differences" if mismatches.empty?
 

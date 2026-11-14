@@ -4,7 +4,7 @@ A Rack 3 router with Sinatra's controller DSL, built for Ruby 4.0, Mustermann 4,
 Sinatra that controllers actually use, drops the rest, and is validated against TMDB's production Sinatra apps, so
 those apps can move over with mostly mechanical changes.
 
-**Status:** phase 0 (routing parity) is done. Phase 1 (core app) is next.
+**Status:** phases 0 (routing parity) and 1 (core app) are done. Phase 2 (controllers) is next.
 
 ### Decisions (2026-11-14)
 
@@ -58,7 +58,7 @@ non-ERB engines go unused. That decides what Reprise keeps (§3).
    The core depends only on `rack` and `mustermann`.
 5. **We use Ruby 4.0 features without making a show of it:** `Data.define` for value objects, pattern matching on
    matches, endless methods, `it`, and `Fiber[]` storage for request context. Route bodies compile to real methods
-   (not `instance_exec`) so YJIT/ZJIT can optimize them and backtraces show the route.
+   (not `instance_exec`), so they run as methods of the request scope that YJIT/ZJIT can optimize.
 
 ---
 
@@ -166,8 +166,12 @@ end
 
 - `provides:` is built in. It does content negotiation on `Accept` with Sinatra's exact semantics, and sets
   `content-type` on match. The one difference is that `Accept` entries of equal priority keep their header order.
-- Custom conditions use `condition(:name) { |*args| ... }`. The block runs in the candidate's scope and returns a
-  boolean.
+- Custom conditions use `condition(:name) { |*args| ... }`. The block runs in the candidate's scope and fails the
+  route only by returning `false`. Sinatra-style condition methods (a class method calling `condition { ... }`) and
+  the anonymous `condition { }` before a route both still work.
+- **Conditions are part of matching, so they run before filters.** They see the request, but not what filters set.
+  A content type set by a before filter doesn't affect which route is chosen first, but it's kept across `pass`, and
+  later `provides:` routes must agree with it (Sinatra's pinning).
 - Dropped: `host_name:`, `user_agent:`/`agent:`.
 
 ### Scope API
@@ -288,8 +292,22 @@ The target is a core under about 2,500 lines. Sinatra's `base.rb` alone is about
   the index matcher.
 - Carried into phase 1: the differential harness stays as the regression suite for every routing change.
 
-**1. Core.** Rack entry, router, routes/filters/errors/conditions, `provides`, the scope API, params, settings,
-  `finalize!`. It needs to pass a Rack::Test suite ported from the Sinatra behaviors we keep.
+**1. Core. Done 2026-11-14.** `Reprise::App` and its request scope (`Reprise::Controller`):
+- routes, filters, error handlers, `provides:`, and custom conditions
+- params (`Reprise::Params`), Request, and Response
+- the scope helpers (`halt`, `pass`, `redirect`, `content_type`, `cache_control`, `expires`, `send_file`,
+  `attachment`, `json`, `cookies`, `session`, ...)
+- Sinatra-style `set`, `configure`, `helpers`, `register`, and `use`
+- `finalize!`, which compiles everything into frozen routers
+
+There are 102 specs, ported from the Sinatra behaviors kept. The differential test now also runs at the app level:
+each table is replayed into a `Reprise::App`, and all 190,845 requests go through Rack. Status, route, params,
+content type, and filters all match Sinatra, with no unexplained differences.
+
+A full Rack call with empty bodies costs 220 µs → 40 µs per routed request and 147 µs → 21 µs per 404 on the larger
+app, and 81 µs → 23 µs on the smaller one.
+
+Deferred: `trailing_slash: :optional`, and `stream` (phase 4).
 
 **2. Controllers.** `Reprise::Controller`, `mount`, private helpers, filter ownership and the `finalize!` overlap
   warning, the `helper_isolation` switch, cross-controller `pass`.
