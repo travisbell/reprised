@@ -322,6 +322,7 @@ reprise-router/
     request.rb  response.rb     # thin Rack::Request / Rack::Response subclasses
     templates.rb                # Template (Erubi compiler), erb/partial/render/capture, lookup + cache
     async.rb                    # Reprise.current (Fiber[]), route timeouts, Reprise::Timeout
+    reloader.rb                 # opt-in: reload the app's code in development (Zeitwerk, or required files)
     streaming.rb                # Stream (Rack 3 streaming body), EventStream, stream/event_stream helpers
     plugins/{action_view,phlex,sprockets,open_telemetry,telemetry}.rb
     telemetry.rb  telemetry/      # opt-in: request metrics and logs, stall detector, reactor lag
@@ -478,6 +479,25 @@ generic parts of the telemetry TMDB's apps share today, reading Reprise's own en
   SDK's own recording), and 1.3 µs more for the log line.
 - Left to the apps: exporters and providers, trace sampling, the Console-to-OpenTelemetry bridge, and
   infrastructure-specific metrics (database, pools, containers).
+
+**Reloading in development. Done 2026-11-14.** Opt-in (`require "reprise/reloader"`):
+`run Reprise::Reloader.new("App", loader:, files: [...])` in config.ru.
+- **What reloads:** everything the Zeitwerk loader manages, and for an app Zeitwerk doesn't load (Sinatra's classic
+  layout, one class reopened across required files), its `files`: the constant is removed and the files are required
+  again. `Controller.mount` accepts a controller that's already mounted in an app its constant no longer names, so a
+  controller that isn't reloaded (from a gem, say) can be mounted in the reloaded app.
+- **When:** at the start of the first request that finds a change. A shared/exclusive lock (a Mutex and
+  ConditionVariable, which work across fibers) lets requests in flight finish and holds new ones, so a reload never
+  removes constants under a running request. A reload that raises answers with the error, and is retried with the next
+  request.
+- **What's watched:** the managed files as they load (Zeitwerk's `on_load`, so an edit between loading and the next
+  request counts), the loader's directories (`all_expected_cpaths`, so ignored paths aren't watched), and `files`.
+  Directories count only when their `.rb` files change, so an editor's swap file doesn't cause a reload. There's no
+  watcher thread, so it needs no fork hook.
+- **On the smaller app** (one class across 36 required files, plus a Zeitwerk-managed lib), under Falcon: added,
+  edited, and removed route files, edits to app and lib files, a syntax error and its fix all reload. A reload takes
+  about 115 ms, including `finalize!`. The change check costs about 0.1 ms per request, with 43 files and 25
+  directories watched.
 
 **6–7. Migrating TMDB's apps.** The smaller app goes first as the dry run. Both migrations use a codemod for
   controller declarations and mounting, the phase 0 differential test, each app's spec suite, and a shadow mode:

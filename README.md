@@ -12,6 +12,7 @@ A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed 
 
 - Tooling: `reprise routes`, an OpenTelemetry plugin, and Sinatra-compatible env keys for existing middleware
 - Opt-in telemetry: request metrics and an access log, an event-loop stall detector, and reactor lag
+- Code reloading in development, with Zeitwerk
 
 See [PLAN.md](PLAN.md).
 
@@ -74,6 +75,27 @@ use Reprise::Telemetry::Requests # below the tracer: its log line carries the tr
 
 It needs the `opentelemetry-metrics-api` and `console` gems (Falcon brings `console`). Give your meter provider Reprise's
 histogram buckets with `Reprise::Telemetry::Metrics.add_views(provider)`.
+
+## Reloading in development
+
+`Reprise::Reloader` reloads the app's code when it changes, before the next request. It waits for the requests in
+flight to finish, and holds new ones until the reload is done, so no request sees half-loaded code. It reloads with a
+Zeitwerk loader, and can also reload an app defined in plain required files, such as one class reopened across several
+files. It needs no file-watcher thread: each request checks the files the app has loaded, and their directories.
+
+```ruby
+# config.ru
+if ENV["RACK_ENV"] == "development"
+  require "reprise/reloader"
+  run Reprise::Reloader.new("App", loader:)                                   # App is loaded by Zeitwerk
+  # run Reprise::Reloader.new("API", loader:, files: ["app.rb", "routes/*.rb"]) # or defined in required files
+else
+  run App
+end
+```
+
+The loader needs `enable_reloading` before its `setup`. A reload that raises (a syntax error, say) answers with the
+error, and is tried again with the next request. config.ru and its middleware aren't reloaded.
 
 ## Development
 

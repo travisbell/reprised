@@ -50,12 +50,19 @@ module Reprise
       end
 
       # Called by App.mount: gives the controller the app's helpers, and its settings.
+      # A controller that isn't reloaded can be mounted again in a reloaded app: one whose constant has replaced the
+      # app it was mounted in.
       def mounted_in(app)
-        raise ArgumentError, "#{self} is already mounted in #{@app}" if @app && !@app.equal?(app)
+        raise ArgumentError, "#{self} is already mounted in #{@app}" if @app && !@app.equal?(app) && !replaced?(@app)
         raise ArgumentError, "#{self} has no routes, filters, or error handlers to mount" if self == Controller
 
         @app = app
         include(app.helpers_module)
+      end
+
+      # Whether +app+'s name now names another class, as it does once the app is reloaded.
+      private def replaced?(app)
+        !app.name.nil? && Object.const_defined?(app.name) && !Object.const_get(app.name).equal?(app)
       end
 
       # Error handlers for +key+, newest first: remembered per key once the app is finalized.

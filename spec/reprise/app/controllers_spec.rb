@@ -272,6 +272,16 @@ RSpec.describe "Controllers" do
     expect { Class.new(Reprise::App) { mount movies } }.to raise_error(ArgumentError, /already mounted/)
   end
 
+  it "mounts a controller again in an app that has replaced the one it was in, as a reload does" do
+    movies = controller { get("/") { "movies" } }
+    stub_const("ReloadedApp", Class.new(Reprise::App) { mount movies })
+
+    stub_const("ReloadedApp", Class.new(Reprise::App))
+    ReloadedApp.mount(movies)
+
+    expect(movies.app).to equal(ReloadedApp)
+  end
+
   it "doesn't mount apps or other things" do
     other_app = Class.new(Reprise::App)
 
