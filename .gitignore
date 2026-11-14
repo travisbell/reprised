@@ -1,0 +1,14 @@
+/.bundle/
+/pkg/
+/tmp/
+/coverage/
+/spike/oracle/.bundle/
+/spike/results/
+Gemfile.lock
+.rspec_status
+
+# Private route tables and results extracted from TMDB apps; never commit them.
+/spike/fixtures/
+
+# App-specific migration notes; never commit them.
+/private/

@@ -1,0 +1,318 @@
+# Reprise Router: Plan
+
+A Rack 3 router with Sinatra's controller DSL, built for Ruby 4.0, Mustermann 4, and Falcon/Async. It keeps the parts of
+Sinatra that controllers actually use, drops the rest, and is validated against TMDB's production Sinatra apps, so
+those apps can move over with mostly mechanical changes.
+
+**Status:** phase 0 (routing parity) is done. Phase 1 (core app) is next.
+
+### Decisions (2026-11-14)
+
+| # | Decision |
+|---|---|
+| 1 | Class-based controllers: `class X < Reprise::Controller` |
+| 2 | Route first, then filters scoped to their owner. Controller filters don't run when no route matches |
+| 3 | Gem `reprise-router`, code under `lib/reprise/`, top-level module `Reprise`, `require "reprise"` |
+| 4 | Apps that define everything on one reopened app class (`class API < Sinatra::Base` in many files) are first-class. Multi-verb `route`, `json`, `mime_type`, and `configure :env` are core |
+| 5 | Tests use RSpec |
+| 6 | Routing uses a literal-segment index over Mustermann patterns, not `Mustermann::Set`'s trie (phase 0, §3) |
+
+---
+
+## 1. Why
+
+Sinatra's design was settled long before Rack 3, Falcon, fibers, or Ruby 4. Large modular Sinatra apps run into the
+same problems:
+
+- **Routing is a linear scan.** Every request tries routes in definition order until one matches. With about 1,100
+  routes, a request for a route defined late tries hundreds of patterns, and every 404 tries all of them. Phase 0
+  measured roughly 130–200 µs of routing per request on a production-sized table (§7).
+- **Extensions flatten into one namespace.** `Sinatra::Extension` helpers from every module are mixed into the app,
+  so every controller sees every other controller's helpers, and name collisions go unnoticed.
+- **Rendering integrations are patched in.** Making ActionView helpers and Phlex work in Sinatra takes a custom output
+  buffer, request monkey-patches, and stand-ins for Rails pieces such as `flash`.
+- **Unused machinery is still paid for:** the `settings` proc chain, an app `dup` per request, Tilt, classic mode,
+  built-in servers, `lock`/`threaded`, and template engines nobody uses.
+
+In TMDB's two apps, almost all controller code uses a small surface: verb routes (many ending in `/?`), `provides:`,
+a couple of custom conditions, pattern filters, error handlers by class and status, `halt`/`redirect`/`pass`, `erb` with
+explicit layouts and locals, Phlex components, `content_type`/`cache_control`/`expires`, `send_file`, `session`, and
+`cookies`. Streaming, `forward`, `etag`/`last_modified` helpers, `url()`, the `user_agent`/`host_name` conditions, and
+non-ERB engines go unused. That decides what Reprise keeps (§3).
+
+---
+
+## 2. Design principles
+
+1. **The controller DSL stays Sinatra-shaped.** Route bodies, `halt`, `redirect`, `params`, `erb :x, layout:, locals:`,
+   `before`, `error`, and `provides:` all keep working unchanged. The diff happens at the edges: controller
+   declaration, mounting, and conditions.
+2. **Rack 3 is the interface, and Falcon is where it runs.** Real apps depend on a stack of Rack middleware (sessions,
+   telemetry, feature flags, locale, ...), so a Protocol::HTTP-native core would give up that ecosystem. Instead, the
+   router is written to behave well on Falcon: it is fiber-safe, frozen after boot, streams by default, and takes no
+   locks.
+3. **Everything is frozen after boot.** The route table, filters, handlers, and compiled templates freeze on
+   `App.finalize!`. Each request allocates one scope object. There is no `settings` proc chain and no app `dup` per
+   request.
+4. **Optional parts are plugins.** ActionView, Phlex, OpenTelemetry, WebSocket, and SSE load only when you enable them.
+   The core depends only on `rack` and `mustermann`.
+5. **We use Ruby 4.0 features without making a show of it:** `Data.define` for value objects, pattern matching on
+   matches, endless methods, `it`, and `Fiber[]` storage for request context. Route bodies compile to real methods
+   (not `instance_exec`) so YJIT/ZJIT can optimize them and backtraces show the route.
+
+---
+
+## 3. Public API sketch
+
+```ruby
+# app.rb
+class App < Reprise::App
+  plugin Reprise::Plugins::ActionView, helpers: [
+    ActionView::Helpers::TagHelper, ActionView::Helpers::FormHelper # ...
+  ]
+  plugin Reprise::Plugins::Phlex, view_paths: %w[app/components app/views]
+  plugin Reprise::Plugins::OpenTelemetry, skip_errors: [MyApp::NotFound]
+
+  set :views, File.join(__dir__, "views")   # settings survive as a plain frozen key/value store
+
+  helpers MyApp::Helpers::Session, MyApp::Helpers::Site   # global helpers: every controller sees these
+
+  before { load_current_user }              # global filter: runs for every request
+  error(MyApp::Maintenance) { erb :"errors/maintenance", layout: :"layouts/error" }
+  error(404) { erb :"errors/404", layout: :"layouts/main" }
+
+  condition(:takes_bson_id) { |*keys| keys.all? { BSON::ObjectId.legal?(params[it]) } }
+
+  mount MovieController                     # `register` stays as an alias during migration
+end
+
+# controllers/movie_controller.rb
+class MovieController < Reprise::Controller
+  # Private to this controller: these are plain instance methods. `helpers do ... end` also works and means the same.
+  private def load_movie = (@movie = Movie.find(params[:id]) or halt 404)
+
+  before("/movie/:id/edit") { load_movie }  # runs only when the matched route belongs to this controller
+
+  get "/movie/:id/?", provides: :html do
+    load_movie
+    erb :"movie/show", layout: :"layouts/main", locals: { movie: @movie }
+  end
+
+  get "/movie/:id/cast", provides: :html do
+    phlex Pages::Movie::Cast.new(@movie), layout: :"layouts/main"
+  end
+end
+```
+
+### Controllers and private helpers
+
+- `Reprise::App < Reprise::Controller`. The App is itself a controller that owns its own routes, filters, and methods.
+  So an app that reopens one class across many files keeps that shape (`class API < Reprise::App`), and its class-body
+  `def`s are global helpers.
+- `Reprise::Controller` is the per-request scope class. A request instantiates **one** object: an instance of the
+  matched route's controller. Helpers are ordinary methods, so `private`, `super`, and `Module#prepend` all work as
+  they normally do.
+- `mount` includes the App's global helper module into the controller. Controller methods sit above it in the
+  ancestor chain, so a controller can override a global helper.
+- Templates render inside that scope instance. A view rendered by `MovieController` sees movie helpers plus the global
+  ones, and no other controller's helpers. A shared layout that calls one controller's helper fails loudly
+  (`NoMethodError`), which is the point.
+- Requests that match no route get a bare `App` scope with the global helpers only.
+- A migration switch, `helper_isolation: false`, makes every controller's helpers visible everywhere (Sinatra's
+  behavior), so an app can migrate first and fix cross-controller helper use afterwards.
+
+### Filters
+
+- There is one filter list, kept in definition order, as in Sinatra. Each filter records its owner (App or a
+  controller).
+- **Routing happens first, then filters.** A filter runs if its owner is the App or the matched route's controller,
+  and its pattern matches. Definition order across App and controller filters is preserved exactly. `route` (the
+  matched `Reprise::Route`) is available inside `before` filters.
+- When no route matches, only App filters run. A controller filter no longer runs on a 404 path that happens to match
+  its pattern (`before "/award/*"` on `/award/nope`). Global filters still run, so error pages get whatever the app's
+  filters set up.
+- **Scoping can silently drop a filter from a route**, when a controller filter's pattern also matches a route that
+  belongs to another controller. `finalize!` warns about every such overlap, so moving to scoped filters never
+  silently removes one from a route.
+- `after` filters always run, including after `halt`, as in Sinatra.
+- A filter's params, including a regexp filter's `params["captures"]`, are scoped to that filter. Sinatra leaks
+  captures into the route that runs after it.
+
+### Routing
+
+- **Matcher: a literal-segment index over Mustermann 4 patterns** (`Reprise::Router`, `matcher: :index`). Each pattern
+  is indexed by its leading literal segments (`/movie/:id` sits under `movie`). For a given path, the router tries only
+  the patterns under the segments the path starts with, plus those with no literal prefix, in definition order. Each
+  candidate is matched by its own Mustermann pattern, so matching is the same as Sinatra's and only the candidate
+  list is shorter. Routes and filters both use it.
+- **Not `Mustermann::Set`, for now.** Its trie in 4.0.1 mis-matches common Sinatra forms (`/a/?`, `/a/*` on `/a/`,
+  `/:id.json`, `/tv/:id/edit/?*`). It sent 1,460 of 132,570 test requests to a different route. Its `strict_order`
+  mode also computes every match before sorting, so it has no "first match" fast path. It stays available as
+  `matcher: :trie` (experimental, partly patched in `Reprise::MustermannFixes`) for re-checking once upstream fixes it.
+  The trie was only about 25% faster than the index. Draft issue: [docs/upstream/mustermann-trie.md](docs/upstream/mustermann-trie.md).
+- Regexp routes and filters sit at the index root (no literal prefix), so they're tried for every path, in definition
+  order.
+- A path containing `%` tries every pattern, because Mustermann matches literals against their encoded forms
+  (`/m%6Fvie`). That matches Sinatra exactly, at Sinatra's cost, for that rare path.
+- `route :get, :post, "/path" do ... end` registers one body under several verbs. It replaces sinatra-contrib
+  MultiRoute.
+- HEAD falls back to GET. An optional `trailing_slash: :optional` app setting will make the `/?` suffix unnecessary.
+  It's off by default for compatibility.
+- `Route = Data.define(:verb, :pattern, :controller, :method_name, :conditions, :source_location)`. `App.routes`
+  exposes the table. It backs `reprise routes` and can feed Falcon's `warmup`.
+- Named routes and `path_for(:movie, id:)` via `Mustermann::Pattern#expand`. This is a later phase and optional.
+
+### Conditions
+
+- `provides:` is built in. It does content negotiation on `Accept` with Sinatra's exact semantics, and sets
+  `content-type` on match. The one difference is that `Accept` entries of equal priority keep their header order.
+- Custom conditions use `condition(:name) { |*args| ... }`. The block runs in the candidate's scope and returns a
+  boolean.
+- Dropped: `host_name:`, `user_agent:`/`agent:`.
+
+### Scope API
+
+| Kept | Dropped |
+|---|---|
+| `params` (indifferent, as `Reprise::Params`), block args from captures, `:splat`, `:captures` | `settings` as a proc-backed object (now a frozen hash, `settings[:key]` / `settings.key`) |
+| `request`, `response`, `env`, `session`, `cookies` (built in, replacing sinatra-contrib) | `forward`, `stream` (replaced, §4), `last_modified`, `etag` (use `Rack::ConditionalGet`) |
+| `halt`, `pass`, `redirect`, `status`, `headers`, `body`, `content_type`, `mime_type` | `back`, `uri`/`url`/`to` (only `path_for` if wanted) |
+| `cache_control`, `expires`, `send_file`, `attachment`, `json` | `enable :sessions`, `:static`, `:protection`, `:logging`, `:show_exceptions`, `:lock`, `:threaded`, `run!`, classic mode / `Sinatra::Delegator`, inline templates |
+| `error` (the current exception; replaces `env["sinatra.error"]`), `route` | Tilt and all non-ERB engines |
+| `configure(*envs) { }`: runs the block when `RACK_ENV` matches, at class-definition time | `set :public_folder`/`:static` (use `Rack::Static` in `config.ru`) |
+| `raise_errors` setting (re-raise in test instead of handling), `Reprise::NotFound` (replaces `Sinatra::NotFound`) | |
+
+Static files, protection, sessions, and the dev error page belong in `config.ru` middleware.
+
+`halt` and `pass` stay `throw`/`catch` based. It's fast, and it's what route bodies already expect.
+
+---
+
+## 4. Falcon + Async at the ground level
+
+- **Request context lives in `Fiber[]`.** `Reprise.current` returns the active scope. Fiber storage is inherited by
+  child tasks, so a `barrier.async { ... }` inside a route (and Phlex components rendered there) can reach the request
+  without threading it through. Nothing uses `Thread.current`.
+- **Concurrency is a built-in helper.** `concurrently { |barrier| ... }` runs independent queries in parallel. It's tied
+  to the request's task, so `halt`, an exception, or a client disconnect stops the children.
+- **Timeouts per route:** `get "/x", timeout: 5` wraps the route in `Async::Task.current.with_timeout` and maps a
+  timeout to 503 or a configurable error class.
+- **Streaming uses Rack 3 streaming bodies** (`body.call(stream)`), which Falcon passes through without buffering.
+  - `stream { |out| ... }` is redone on that, with no EventMachine assumptions.
+  - `event_stream { |sse| sse.event(:update, data) }` provides Server-Sent Events.
+  - Optionally, early flush for ERB/Phlex layouts: send `<head>` (CSS, preload links) before the route's queries
+    finish.
+- **WebSockets as routes:** `websocket "/ws/:channel" do |connection| ... end` on async-websocket's Rack adapter.
+- **Fiber safety by construction:** frozen tables, no shared mutable state, templates compiled at boot in production.
+  It must run clean under `Async::Safe.enable!`, and CI will check that.
+- A native `Protocol::HTTP` adapter is planned for after v1 (phase 8).
+
+---
+
+## 5. Rendering
+
+### ERB (core)
+
+- Templates compile directly with Erubi into methods on a per-app `Templates` module, one per (path, locals-keys)
+  signature, as Tilt and ActionView do. Rendering is then a method call. There's no Tilt.
+- The default engine is `Erubi::CaptureBlockEngine`, so `<%= form_with do %>...<% end %>` block capture works without
+  configuration.
+- The signature is unchanged: `erb :name, layout:, locals:`, and `layout: false`. There's no implicit layout unless
+  `set :default_layout` is set.
+- `partial :name, **locals` is built in: a template with no layout, whose locals are passed as keywords.
+- In production every template compiles eagerly in `finalize!` (warmup). In development, templates recompile on mtime
+  change, with a hook for file watchers and Zeitwerk reload.
+
+### ActionView plugin
+
+- Ships an ActionView-compatible output buffer as the ERB buffer.
+- Includes the configured ActionView helper modules into the global helper module, and provides what those helpers
+  expect from a controller: `output_buffer`, `capture`, `request.headers`, `protect_against_forgery?`, a real `flash`,
+  and `url_for` for strings.
+- Exposes a memoized `view_context` and `lookup_context` for phlex-rails.
+
+### Phlex plugin
+
+- `phlex(Component_or_instance, layout: :"layouts/main", **assigns)` from routes. With a layout, the ERB layout
+  `yield`s the component's output.
+- `render(component)` inside ERB writes into the current buffer. `render` dispatches on its argument: a `Phlex::SGML`
+  goes to Phlex, and a Symbol goes to a template engine, as Sinatra's `render(:erb, ...)` does.
+- Without the ActionView plugin it uses plain Phlex. With it, it uses phlex-rails helper adapters through the shared
+  `view_context`.
+- Components can reach the request through `Reprise.current` instead of passing it through props.
+
+---
+
+## 6. Gem layout
+
+```
+reprise-router/
+  reprise-router.gemspec        # name "reprise-router"; required_ruby_version ">= 4.0"; deps: rack ~> 3.2, mustermann ~> 4.0
+  lib/reprise.rb                # require "reprise"; module Reprise
+  lib/reprise/
+    app.rb                      # Rack entry (#call), mount, plugin, finalize!/freeze
+    controller.rb               # per-request scope base: halt/pass/redirect/params/...
+    dsl.rb                      # get/post/.../before/after/error/condition/helpers
+    router.rb                   # lanes (verbs, filters) + literal-segment index over Mustermann patterns
+    negotiation.rb              # Accept parsing, preferred_type, mime_types (Sinatra semantics, stable sort)
+    mustermann_fixes.rb         # self-testing patches for Mustermann bugs
+    route.rb  filter.rb         # Data.define value objects
+    conditions.rb               # provides + custom registry
+    params.rb                   # indifferent params
+    request.rb  response.rb     # thin Rack::Request / Rack::Response subclasses
+    templates.rb                # Erubi compiler + cache
+    async.rb                    # Fiber[] context, concurrently, timeouts
+    streaming.rb                # stream, event_stream
+    plugins/{action_view,phlex,opentelemetry,websocket}.rb
+    test.rb                     # Rack::Test helpers, route assertions
+  spec/                         # RSpec + Rack::Test; Falcon integration specs under spec/falcon
+  spike/                        # routing parity harness against real Sinatra apps
+  bench/                        # routing benchmarks
+```
+
+The target is a core under about 2,500 lines. Sinatra's `base.rb` alone is about 2,100.
+
+---
+
+## 7. Phases
+
+**0. Spike. Done 2026-11-14.** See [spike/README.md](spike/README.md) and run it with `bundle exec rake spike`.
+- Extracted the route tables of two production Sinatra apps: about 1,150 routes and 24 filters, and about 240 routes
+  and 7 filters.
+- **Differential test:** 190,845 generated requests through Sinatra 4.2.1 and Reprise. With the index matcher there
+  are **no unexplained differences** in route, params, content type, or filters run. The one intended difference is
+  that a regexp filter's `params["captures"]` no longer leaks into the route after it.
+- **Routing cost with empty bodies:** ~201 µs → 16.7 µs per routed request and ~132 µs → 6.5 µs per 404 on the larger
+  app, ~69 µs → 8.9 µs on the smaller.
+- Found nine cases where Mustermann 4.0.1's trie mis-matches, from at least three causes (two diagnosed). That decided
+  the index matcher.
+- Carried into phase 1: the differential harness stays as the regression suite for every routing change.
+
+**1. Core.** Rack entry, router, routes/filters/errors/conditions, `provides`, the scope API, params, settings,
+  `finalize!`. It needs to pass a Rack::Test suite ported from the Sinatra behaviors we keep.
+
+**2. Controllers.** `Reprise::Controller`, `mount`, private helpers, filter ownership and the `finalize!` overlap
+  warning, the `helper_isolation` switch, cross-controller `pass`.
+
+**3. Rendering.** Erubi templates, `partial`, the ActionView plugin, the Phlex plugin.
+
+**4. Async.** `Fiber[]` context, `concurrently`, timeouts, `stream`/`event_stream`, WebSocket routes, an
+  Async::Safe CI job, and Falcon integration tests.
+
+**5. Tooling.** `App.routes` and `reprise routes`, the OpenTelemetry plugin (span name, `http.route`, error skip
+  list), and optional `env` compatibility keys (`sinatra.route`/`sinatra.error`) for middleware that reads them.
+
+**6–7. Migrating TMDB's apps.** The smaller app goes first as the dry run. Both migrations use a codemod for
+  controller declarations and mounting, the phase 0 differential test, each app's spec suite, and a shadow mode:
+  Sinatra serves the request, Reprise computes its match, and we log any disagreement before cutting over. The
+  app-specific notes are kept out of this repo.
+
+**8. Post-v1 (committed, not optional):** a native `Protocol::HTTP` adapter for Falcon-only apps that skips the Rack
+  env translation. Before starting it, benchmark how much of per-request time the Rack translation actually costs.
+
+---
+
+## 8. Open questions
+
+1. **The `Reprise` constant:** the unrelated `reprise` gem on RubyGems probably uses the same top-level module. It's
+   harmless unless both are loaded in one process, which is unlikely, but worth knowing before a public release.

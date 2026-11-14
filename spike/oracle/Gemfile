@@ -1,0 +1,9 @@
+# frozen_string_literal: true
+
+# The reference Sinatra, pinned to what tmdb-web and tmdb-api run. Kept apart from the gem's own bundle because
+# Sinatra 4.2 requires Mustermann ~> 3.0 and Reprise requires ~> 4.0.
+source "https://rubygems.org"
+
+gem "mustermann", "3.1.1"
+gem "rack", "~> 3.2"
+gem "sinatra", "4.2.1"

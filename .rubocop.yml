@@ -1,0 +1,31 @@
+inherit_gem:
+  rubocop-shopify: rubocop.yml
+
+AllCops:
+  TargetRubyVersion: 4.0
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - spike/oracle/vendor/**/*
+
+Layout/LineLength:
+  Max: 120
+
+Style/MethodCallWithArgsParentheses:
+  Enabled: true
+  AllowedMethods: [not_to, puts, raise, require, require_relative, to, to_not, yield]
+  Exclude:
+    - "**/Gemfile"
+    - "spec/**/*_spec.rb"
+
+Style/TrailingCommaInArguments:
+  EnforcedStyleForMultiline: no_comma
+
+Style/TrailingCommaInArrayLiteral:
+  EnforcedStyleForMultiline: no_comma
+
+Style/TrailingCommaInHashLiteral:
+  EnforcedStyleForMultiline: no_comma
+
+Style/ClassMethodsDefinitions:
+  Enabled: false
