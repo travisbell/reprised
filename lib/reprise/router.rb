@@ -158,8 +158,11 @@ module Reprise
       # for param names. +trailing+: whether the path may (:optional), must (:required), or mustn't (:forbidden) end
       # with "/".
       def initialize(segments, trailing)
+        @segments = segments
+        @size = segments.size
         @names = segments.grep(String).freeze
         literals = segments.map { it.is_a?(Symbol) ? it.name : nil }
+        @literals = literals.freeze
         ending = { optional: "/?", required: "/", forbidden: "" }.fetch(trailing)
 
         if @names.empty?
@@ -171,20 +174,24 @@ module Reprise
           end.freeze
         else
           check = literals.map { it ? Regexp.escape(it) : "[^/]+" }
-          extract = literals.map { it ? Regexp.escape(it) : "([^/]+)" }
           @check = Regexp.new("\\A/#{check.join("/")}#{ending}\\z")
-          @extract = Regexp.new("\\A/#{extract.join("/")}#{ending}\\z")
         end
         freeze
       end
 
-      # Params for +path+ (a plain path), or nil.
+      # Params for +path+ (a plain path), or nil. Once it matches, each param is the segment at its position.
       def params(path)
         return unless @check.match?(path)
 
-        captures = @extract.match(path).captures
         params = {}
-        @names.each_with_index { |name, index| params[name] = captures[index] }
+        position = 1
+        index = 0
+        while index < @size
+          segment_end = path.byteindex("/", position) || path.bytesize
+          params[@segments[index]] = path.byteslice(position, segment_end - position) unless @literals[index]
+          position = segment_end + 1
+          index += 1
+        end
         params
       end
     end
@@ -280,7 +287,7 @@ module Reprise
 
         until node.children.empty?
           segment_end = path.index("/", position) || path.size
-          child = node.children[path[position...segment_end]] or break
+          child = node.children[path.byteslice(position, segment_end - position)] or break
           node = child
           break if segment_end >= path.size
 

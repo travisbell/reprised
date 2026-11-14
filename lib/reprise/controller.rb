@@ -63,16 +63,20 @@ module Reprise
     # The instance variables #initialize sets: the request's state, carried over when the scope changes controller.
     STATE = [:@env, :@request, :@response, :@params, :@route, :@__default_layout].freeze
 
-    attr_reader :env, :request, :response, :params
+    attr_reader :env, :response
+
+    # Made on first use: a route that reads neither costs neither.
+    def request = @request ||= Request.new(@env)
+    def params = @params ||= Params.new
 
     # The Route answering this request, set once one matches (also during before filters). nil for a 404.
     attr_reader :route
 
     def initialize(env)
       @env = env
-      @request = Request.new(env)
+      @request = nil
       @response = Response.new
-      @params = Params.new
+      @params = nil
       @route = nil
       @__default_layout = :layout
     end

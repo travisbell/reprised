@@ -53,14 +53,24 @@ module Reprise
       query = query_string
       return unless PLAIN_QUERY.match?(query)
 
-      query.split("&").each_with_object({}) do |pair, params|
-        next if pair.empty?
+      # Scanned in place: each pair becomes just its key and value strings. Keys are frozen, so the Hash keeps them
+      # rather than copying them.
+      params = {}
+      length = query.bytesize
+      position = 0
+      while position < length
+        pair_end = query.byteindex("&", position) || length
+        if pair_end > position
+          equals = query.byteindex("=", position)
+          equals = nil if equals && equals > pair_end
+          return nil if equals == position # an empty key: Rack has its own rules for those
 
-        key, value = pair.split("=", 2)
-        return nil if key.empty? # Rack has its own rules for those
-
-        params[key.force_encoding(Encoding::UTF_8)] = value&.force_encoding(Encoding::UTF_8)
+          key = query.byteslice(position, (equals || pair_end) - position).force_encoding(Encoding::UTF_8).freeze
+          params[key] = (query.byteslice(equals + 1, pair_end - equals - 1).force_encoding(Encoding::UTF_8) if equals)
+        end
+        position = pair_end + 1
       end
+      params
     end
   end
 end

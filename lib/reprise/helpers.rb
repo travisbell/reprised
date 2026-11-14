@@ -13,6 +13,9 @@ module Reprise
     # Characters escaped in a Content-Disposition filename (https://html.spec.whatwg.org/#multipart-form-data).
     FILENAME_ESCAPES = { '"' => "%22", "\r" => "%0D", "\n" => "%0A" }.freeze
 
+    NO_PARAMS = {}.freeze
+    private_constant :NO_PARAMS
+
     # Stops processing and responds with +response+: a status, a body, [status, body], [status, headers, body], or
     # anything that responds to #each.
     def halt(*response)
@@ -36,7 +39,7 @@ module Reprise
         def block.each = yield(call)
         response.body = block
       elsif value
-        headers.delete("content-length") unless request.head? || value.is_a?(Rack::Files::BaseIterator)
+        headers.delete("content-length") unless env["REQUEST_METHOD"] == "HEAD" || value.is_a?(Rack::Files::BaseIterator)
         response.body = value
       else
         response.body
@@ -97,7 +100,7 @@ module Reprise
 
     # Sets the content type from a media type or extension (:json, "text/csv"), adding the app's default charset to
     # text and a few other types (the add_charset setting). With no arguments, returns the current content type.
-    def content_type(type = nil, params = {})
+    def content_type(type = nil, params = NO_PARAMS)
       return response["content-type"] unless type
       # The same few types are set request after request: with no parameters, the header is worked out once per app.
       return response["content-type"] = settings.content_type_for(type) { build_content_type(type, {}) } if params.empty?
@@ -190,7 +193,7 @@ module Reprise
     end
 
     # Encodes +object+ as JSON with the json_encoder setting and sets the content type, as sinatra-contrib's json.
-    def json(object, options = {})
+    def json(object, options = NO_PARAMS)
       content_type(options[:content_type] || settings.json_content_type)
       encoder = options[:json_encoder] || settings.json_encoder
       return encoder.encode(object) if encoder.respond_to?(:encode)

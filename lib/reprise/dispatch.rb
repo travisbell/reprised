@@ -21,6 +21,9 @@ module Reprise
   # controller, the scope becomes an instance of that one, taking over the previous scope's instance variables, so
   # what filters set survives a `pass` across controllers.
   class Dispatch
+    NO_VALUES = [].freeze
+    private_constant :NO_VALUES
+
     # Single-owner: one request, on one fiber. Async::Safe (when enabled) reports any concurrent use.
     ASYNC_SAFE = false
 
@@ -72,7 +75,8 @@ module Reprise
     def dispatch!
       # Rack's params are the query's merged with the form body's. Without a body that's just the query's, and without
       # a query string either, there's nothing to parse.
-      request_params = if request.form_body?
+      # (Without a content type, only a POST can have a form body.)
+      request_params = if (env["CONTENT_TYPE"] || env["REQUEST_METHOD"] == "POST") && request.form_body?
         request.params
       elsif !env["QUERY_STRING"].to_s.empty?
         request.GET
@@ -92,7 +96,7 @@ module Reprise
     def route!
       pass_block = nil
 
-      @app.router.each(route_lane, request.path_info) do |route, route_params|
+      @app.router.each(route_lane, path) do |route, route_params|
         response.delete_header("content-type") unless @pinned_content_type
         enter(route.owner)
 
@@ -121,8 +125,10 @@ module Reprise
       handle_exception!(NotFound.new)
     end
 
+    def path = env["PATH_INFO"].to_s
+
     def route_lane
-      method = request.request_method
+      method = env["REQUEST_METHOD"]
       method == "HEAD" && !@app.router.lane?("HEAD") ? "GET" : method
     end
 
@@ -159,7 +165,7 @@ module Reprise
 
     # Runs the filters of +type+ whose pattern matches: the app's, and the matched route's controller's.
     def filter!(type)
-      @app.filter_router(type).each(:any, request.path_info) do |filter, filter_params|
+      @app.filter_router(type).each(:any, path) do |filter, filter_params|
         next unless filter.owner <= App || filter.owner == @route&.owner
 
         with_params(filter_params) do
@@ -184,16 +190,15 @@ module Reprise
 
       extra.delete("ignore")
       force_encoding(extra)
-      # Merged into params in place, noting what to put back, rather than copying params for every route and filter.
+      # Merged into params in place, noting what was there before, rather than copying params for every route and
+      # filter.
       current = params
       previous = nil
-      added = nil
       extra.each do |key, value|
         if current.key?(key)
           (previous ||= {})[key] = current[key]
           current[key] = value unless value.nil?
         else
-          (added ||= []) << key
           current[key] = value
         end
       end
@@ -204,8 +209,7 @@ module Reprise
       raise
     ensure
       unless failed
-        previous&.each { |key, value| current[key] = value }
-        added&.each { current.delete(it) }
+        extra.each_key { |key| previous&.key?(key) ? current[key] = previous[key] : current.delete(key) }
       end
     end
 
@@ -214,7 +218,8 @@ module Reprise
     def run_action(action, matched_params)
       return action.bind_call(scope) if action.arity.zero?
 
-      action.bind_call(scope, *(matched_params["captures"] || matched_params.values.flatten))
+      values = matched_params["captures"] || matched_params.values
+      action.bind_call(scope, *(values.any?(Array) ? values.flatten : values))
     end
 
     def route_eval = throw(:halt, yield)
@@ -270,19 +275,20 @@ module Reprise
     # Runs the error handler for +key+ (an exception class, walking up to its superclasses, or a status): the scope's
     # controller's, or else the app's. Handlers for the same key run newest first; an older one runs only if every
     # newer one returns nil.
-    def error_block!(key, *block_params)
+    # +boom+ is passed to handlers that take it.
+    def error_block!(key, boom = nil)
       handlers = error_handlers(key)
       last = handlers.size - 1
       index = 0
       while index <= last
-        result = Action.call(handlers[index].action, scope, block_params)
+        result = Action.call(handlers[index].action, scope, boom ? [boom] : NO_VALUES)
         return result unless result.nil? && index < last
 
         index += 1
       end
       return false unless key.respond_to?(:superclass) && key.superclass < Exception
 
-      error_block!(key.superclass, *block_params)
+      error_block!(key.superclass, boom)
     end
 
     def error_handlers(key)

@@ -12,6 +12,7 @@
 require "bundler/setup"
 require "rack/mock"
 require_relative "../lib/reprise"
+require "rack/head"
 
 module Bench
   VIEWS = File.expand_path("../spec/fixtures/views", __dir__)
@@ -66,25 +67,52 @@ module Bench
     get("/") { erb :"movie/show", layout: :"layouts/main", locals: { title: "Movie", cast: Array.new(20) { "Actor #{it}" } } }
   end
 
+  # A bare Rack app behind Rack::Head, as Reprise's stack ends: everything above this is Reprise's own cost (the
+  # harness copies each request's env, as a server builds one).
+  FLOOR = Rack::Head.new(->(_env) { [200, { "content-type" => "text/html;charset=utf-8", "content-length" => "2" }, ["hi"]] })
+
+  # Each workload is built when it's measured, so loading one (the TMDB tables parse a lot) doesn't bloat the heap the
+  # others run in.
   WORKLOADS = { # rubocop:disable Style/MutableConstant -- the TMDB tables are added below, when present
-    "hello" => [Hello, [env("/")]],
-    "api" => [Api, [env("/3/movie/550", accept: JSON_ACCEPT, query: "language=en-US&page=2")]],
-    "api 404" => [Api, [env("/3/nope", accept: JSON_ACCEPT)]],
-    "controller" => [Controllers, [env("/movie/550/cast", accept: BROWSER_ACCEPT)]],
-    "erb" => [Rendered, [env("/")]]
+    "rack floor" => -> { [FLOOR, [env("/")]] },
+    "hello" => -> { [Hello, [env("/")]] },
+    "api" => -> { [Api, [env("/3/movie/550", accept: JSON_ACCEPT, query: "language=en-US&page=2")]] },
+    "api 404" => -> { [Api, [env("/3/nope", accept: JSON_ACCEPT)]] },
+    "controller" => -> { [Controllers, [env("/movie/550/cast", accept: BROWSER_ACCEPT)]] },
+    "erb" => -> { [Rendered, [env("/")]] }
   }
 
-  fixtures = File.expand_path("../spike/fixtures", __dir__)
-  if File.exist?("#{fixtures}/tmdb-web.routes.json") && File.exist?(File.expand_path("../spike/results/tmdb-web.oracle.jsonl", __dir__))
-    require_relative "../spike/app_table"
-    require_relative "../spike/sample"
+  if File.exist?(File.expand_path("../spike/fixtures/tmdb-web.routes.json", __dir__)) &&
+      File.exist?(File.expand_path("../spike/results/tmdb-web.oracle.jsonl", __dir__))
     ["tmdb-web", "tmdb-api"].each do |name|
-      sample = Spike::Sample.load(name)
-      app = Spike::AppTable.load(name, controllers: name == "tmdb-web", record: false).app
-      to_env = ->(request) { env(request["path"], method: request["verb"], accept: request["accept"]) }
-      WORKLOADS["#{name} routed"] = [app, sample["routed"].map(&to_env)]
-      WORKLOADS["#{name} 404"] = [app, sample["not_found"].map(&to_env)]
+      ["routed", "not_found"].each do |kind|
+        WORKLOADS["#{name} #{kind == "routed" ? "routed" : "404"}"] = lambda do
+          require_relative "../spike/app_table"
+          require_relative "../spike/sample"
+          app = Spike::AppTable.load(name, controllers: name == "tmdb-web", record: false).app
+          envs = Spike::Sample.load(name).fetch(kind).map { env(it["path"], method: it["verb"], accept: it["accept"]) }
+          [app, envs]
+        end
+      end
     end
+  end
+
+  # Builds and measures a workload in a child process of its own, with a compacted heap.
+  def self.isolated(name)
+    reader, writer = IO.pipe
+    pid = fork do
+      reader.close
+      app, envs = WORKLOADS.fetch(name).call
+      GC.start
+      GC.compact
+      writer.write(Marshal.dump(measure(app, envs)))
+      writer.close
+      exit!(0)
+    end
+    writer.close
+    result = Marshal.load(reader.read)
+    Process.wait(pid)
+    result
   end
 
   def self.measure(app, envs, seconds: 3.0)
@@ -114,10 +142,10 @@ module Bench
   def self.run(names)
     jit = defined?(RubyVM::YJIT) && RubyVM::YJIT.enabled? ? "yjit" : "interpreter"
     puts format("%-18s %10s %8s %12s   (%s, Ruby %s)", "workload", "µs/req", "±%", "allocs/req", jit, RUBY_VERSION)
-    WORKLOADS.each do |name, (app, envs)|
+    WORKLOADS.each_key do |name|
       next unless names.empty? || names.any? { name.start_with?(it) }
 
-      us, spread, allocations = measure(app, envs)
+      us, spread, allocations = isolated(name)
       puts format("%-18s %10.2f %7.1f%% %12.1f", name, us, spread, allocations)
     end
   end

@@ -40,14 +40,21 @@ module Reprise
       @methods = {}
     end
 
+    NO_LOCALS = {}.freeze
+
     # Renders on +scope+ with +locals+ as local variables, yielding to +block+ from `yield` in the template.
-    def render(scope, locals = {}, &)
-      keys = locals.keys
-      method = @methods[keys] || compile(keys)
-      method.bind_call(scope, locals, &)
+    def render(scope, locals = NO_LOCALS, &)
+      method_for(locals).bind_call(scope, locals, &)
     end
 
     private
+
+    # The compiled method for +locals+' names, found by comparing names rather than building an Array of them.
+    def method_for(locals)
+      size = locals.size
+      @methods.each { |names, method| return method if names.size == size && names.all? { locals.key?(it) } }
+      compile(locals.keys)
+    end
 
     # Defines the method for this set of local names. The previous buffer is restored afterwards, since every template
     # writes to the same instance variable and templates render inside each other.
@@ -89,17 +96,69 @@ module Reprise
     #
     # A route's template gets the layout views/layout.erb, if there is one, unless it passes `layout:` (false for
     # none). Templates rendered inside templates get no layout. The layout gets the template's locals too.
-    def erb(template, options = {}, locals = {}, &) = render(:erb, template, options, locals, &)
+    def erb(template, options = NO_OPTIONS, locals = NO_OPTIONS, &) = render(:erb, template, options, locals, &)
 
     # Renders a template without a layout, passing locals as keywords: `partial "movie/_card", movie:`.
     def partial(name, options = nil, **locals, &)
+      return render_template(name.to_sym, locals, false, &) if options.nil? && self.class.app.erb_defaults.plain
+
       render(:erb, name.to_sym, { **options, layout: false, locals: { **locals } }, &)
     end
 
-    # Sinatra's render. Only the :erb engine is built in.
-    def render(engine, data, options = {}, locals = {}, &block)
+    NO_OPTIONS = {}.freeze
+
+    # Sinatra's render. Only the :erb engine is built in. The common call (only layout: and locals:, with plain erb
+    # settings) reads its options directly; anything else goes through the whole of Sinatra's option handling.
+    def render(engine, data, options = NO_OPTIONS, locals = NO_OPTIONS, &block)
       raise ArgumentError, "unknown template engine #{engine.inspect}; only :erb is built in" unless engine == :erb
 
+      defaults = self.class.app.erb_defaults
+      return render_with_options(engine, data, options, locals, &block) unless defaults.plain && plain_options?(options)
+
+      locals = options[:locals] || locals || NO_OPTIONS
+      layout_key = options.key?(:layout) || defaults.layout_key
+      layout = options.key?(:layout) ? options[:layout] : defaults.layout
+      layout = false if layout.nil? && layout_key
+      render_template(data, locals, layout, &block)
+    end
+
+    private def plain_options?(options)
+      options.each_key { |key| return false unless key == :layout || key == :locals }
+      true
+    end
+
+    # Renders +data+ with +locals+, inside +layout+ (nil: the default layout, if its file exists; false: none).
+    private def render_template(data, locals, layout, &block)
+      defaults = self.class.app.erb_defaults
+      eat_errors = layout.nil?
+      layout = defaults.layout if layout.nil? || (layout == true && defaults.layout != false)
+      layout = @__default_layout if layout.nil? || layout == true
+
+      begin
+        default_layout = @__default_layout
+        @__default_layout = false
+        output = self.class.app.default_template(data, defaults.views).render(self, locals, &block)
+      ensure
+        @__default_layout = default_layout
+      end
+      return output unless layout
+
+      catch(:layout_missing) do
+        layout_template = self.class.app.default_template(layout, defaults.views, eat_errors:)
+        begin
+          default_layout = @__default_layout
+          @__default_layout = false
+          return layout_template.render(self, locals) { output }
+        ensure
+          @__default_layout = default_layout
+        end
+      end
+      output
+    end
+
+    # Sinatra's render with all its options: views:, scope:, content_type:, layout_options:, Erubi options, and the
+    # erb setting's.
+    private def render_with_options(engine, data, options, locals, &block)
       options = options.dup
       engine_options = settings.respond_to?(engine) ? settings.__send__(engine) : {}
       options.merge!(engine_options) { |_key, given, _setting| given }
@@ -147,35 +206,74 @@ module Reprise
 
     # Template lookup and caching, for the app class.
     module Lookup
+      # The erb setting and views, read once: +plain+ when the erb setting holds only Erubi options and :layout, so
+      # renders can take the fast path. +engine_options+ are the Erubi options every template compiles with.
+      ErbDefaults = Data.define(:plain, :engine_options, :layout, :layout_key, :views)
+
+      MISSING = Object.new.freeze
+      private_constant :MISSING
+
+      def erb_defaults
+        @erb_defaults ||= begin
+          erb = settings.erb
+          ErbDefaults.new(
+            plain: erb.each_key.all? { Template::ENGINE_OPTIONS.include?(it) || it == :layout },
+            engine_options: erb.slice(*Template::ENGINE_OPTIONS).freeze, layout: erb[:layout], layout_key: erb.key?(:layout),
+            views: settings.views.to_s.freeze
+          )
+        end
+      end
+
       # The compiled template for +data+ (a Symbol naming a file in +views+, or a String of template source), cached
       # per app. With reload_templates on, a file is recompiled when it changes.
       def template(data, engine_options, views, eat_errors: false)
+        return default_template(data, views, eat_errors:) if engine_options == erb_defaults.engine_options
+
         key = [data, engine_options, views].freeze
         cached = template_cache[key]
         return cached if cached && !(settings.reload_templates? && stale?(cached))
 
-        compiled = case data
-        when Symbol then file_template(data, engine_options, views, eat_errors:)
-        when String then Template.new(data, path: "(inline template)", options: engine_options)
-        else raise ArgumentError, "can't render #{data.inspect}; pass a template name (Symbol) or source (String)"
-        end
+        compiled = compile_template(data, engine_options, views, eat_errors:)
         @template_cache = template_cache.merge(key => compiled).freeze
         compiled
+      end
+
+      # The compiled template for +data+ with the app's own Erubi options: cached by views directory and name, so
+      # looking it up allocates nothing. A missing file is remembered too (unless reload_templates is on), since a
+      # route's render looks for views/layout.erb every time and most apps have none.
+      def default_template(data, views, eat_errors: false)
+        by_views = (@default_templates ||= {})[views] ||= {}
+        cached = by_views[data]
+        if cached && !(settings.reload_templates? && (cached.equal?(MISSING) || stale?(cached)))
+          throw(:layout_missing) if cached.equal?(MISSING) && eat_errors
+          return cached unless cached.equal?(MISSING)
+        end
+
+        compiled = catch(:layout_missing) { return by_views[data] = compile_template(data, erb_defaults.engine_options, views, eat_errors:) }
+        by_views[data] = MISSING
+        throw(:layout_missing, compiled)
       end
 
       # Compiles every template in the views directory, so the first request for each doesn't. Run by finalize! when
       # precompile_templates is on (the default outside development and test).
       def precompile_views!
-        views = settings.views
-        engine_options = settings.erb.slice(*Template::ENGINE_OPTIONS)
+        views = erb_defaults.views
         Dir.glob("**/*.erb", base: views).each do |file|
-          template(file.delete_suffix(".erb").to_sym, engine_options, views)
+          default_template(file.delete_suffix(".erb").to_sym, views)
         end
       end
 
       private
 
       def template_cache = @template_cache ||= {}.freeze
+
+      def compile_template(data, engine_options, views, eat_errors:)
+        case data
+        when Symbol then file_template(data, engine_options, views, eat_errors:)
+        when String then Template.new(data, path: "(inline template)", options: engine_options)
+        else raise ArgumentError, "can't render #{data.inspect}; pass a template name (Symbol) or source (String)"
+        end
+      end
 
       def file_template(name, engine_options, views, eat_errors:)
         path = File.join(views, "#{name}.erb")
