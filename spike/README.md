@@ -57,7 +57,8 @@ Routing cost per request, with route and filter bodies that do nothing:
 | tmdb-api, one request per route (243) | 79.1 µs | ~69 µs (RouteIndex: 42.1 total) | **8.9 µs** | 7.3 µs |
 | tmdb-api, 404s (200) | 50.3 µs | ~40 µs (RouteIndex: 68.6 total) | **5.3 µs** | 5.6 µs |
 
-A full Rack call through each framework (2026-11-14, after phase 1):
+A full Rack call through each framework (2026-11-14, after phase 1; see PLAN.md's performance pass for where it is
+now: 211.7 → 17.1 µs on tmdb-web routed, 78.1 → 12.3 µs on tmdb-api, same harness):
 
 | | Sinatra 4.2.1 | Reprise::App |
 |---|---|---|

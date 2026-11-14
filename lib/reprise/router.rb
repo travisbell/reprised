@@ -380,7 +380,9 @@ module Reprise
       end
 
       def regexp_segments(pattern)
-        inner = MUSTERMANN_REGEXP.match(pattern.regexp.source)&.[](1)
+        # Mustermann keeps a regexp's "/" escaped; an escaped "/" is just a "/". (The prefix stops at the first character
+        # that isn't a plain one, a backslash included, so nothing after it is misread.)
+        inner = MUSTERMANN_REGEXP.match(pattern.regexp.source)&.[](1)&.gsub("\\/", "/")
         return [] unless inner&.start_with?("/") && !top_level_alternation?(inner)
 
         segments = []

@@ -70,12 +70,12 @@ RSpec.describe Reprise::Router do
 
     it "matches an Array of patterns once, at its first matching pattern" do
       routes = router do
-        add(:before, ["/award/?", "/award/*"], :award)
+        add(:before, ["/team/?", "/team/*"], :team)
         add(:before, /.*/, :everything)
       end
 
-      expect(routes.each(:before, "/award/").to_a).to eq([[:award, {}], [:everything, {}]])
-      expect(routes.each(:before, "/award/2024").to_a).to eq([[:award, { "splat" => ["2024"] }], [:everything, {}]])
+      expect(routes.each(:before, "/team/").to_a).to eq([[:team, {}], [:everything, {}]])
+      expect(routes.each(:before, "/team/2024").to_a).to eq([[:team, { "splat" => ["2024"] }], [:everything, {}]])
     end
 
     it "tries every pattern for a percent-encoded path, which Mustermann matches against literals" do
@@ -149,14 +149,16 @@ RSpec.describe Reprise::Router do
 
     it "indexes a regexp by the literal segments it starts with, and only those" do
       routes = router do
-        add("GET", %r{/settings/(.*)}, :settings)
-        add("GET", %r{/subscribe/?(.*)}, :subscribe)
+        add("GET", %r{/preferences/(.*)}, :preferences)
+        add("GET", %r{/newsletter/?(.*)}, :newsletter)
         add("GET", %r{/a|/b/(.*)}, :alternation)
       end
 
-      expect(values(routes, "/settings/profile")).to eq([:settings])
-      expect(values(routes, "/settingsx")).to eq([])
-      expect(values(routes, "/subscribers")).to eq([:subscribe])
+      expect(values(routes, "/preferences/profile")).to eq([:preferences])
+      lane = routes.instance_variable_get(:@lanes)["GET"]
+      expect(lane.instance_variable_get(:@root).candidates.map { it.entry.value }).to eq([:newsletter, :alternation])
+      expect(values(routes, "/preferencesx")).to eq([])
+      expect(values(routes, "/newsletters")).to eq([:newsletter])
       expect(values(routes, "/a")).to eq([:alternation])
     end
 

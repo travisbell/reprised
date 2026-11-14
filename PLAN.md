@@ -393,6 +393,41 @@ Deferred: `trailing_slash: :optional`, and `stream` (phase 4).
 - `use` now forwards keyword arguments to middleware.
 - 170 specs.
 
+**Performance pass. Done 2026-11-14.** Measured with `bench/perf.rb` (each workload in its own process, median of
+ten rounds) and profiled with `bench/profile.rb`. Under YJIT, before → after, in µs per request (allocations):
+
+| workload | before | after |
+|---|---|---|
+| hello (one route) | 4.23 (41) | 2.20 (13) |
+| api (provides:, params, filters, json) | 18.85 (191) | 5.95 (34) |
+| controller (mounted, scoped filters) | 10.44 (101) | 6.30 (42) |
+| erb (layout, template, partial) | 12.21 (124) | 8.16 (80) |
+| larger app's table, routed | 24.45 (190) | 7.92 (39) |
+| smaller app's table, routed | 14.14 (110) | 4.92 (28) |
+
+A bare Rack app costs 0.25 µs (5) in the same harness.
+
+- **Caching and indexing:**
+  - parsed Accept headers and `provides:` answers are cached
+  - index nodes hold precomputed candidate lists
+  - whole-segment params index as wildcards, and regexps by their literal prefixes, which cut route candidates per
+    request from 25 to 5
+- **Cheaper matching:** simple patterns are checked with capture-free regexps, and every other pattern gets a
+  `match?` test before Mustermann is asked for params.
+- **Fewer allocations:**
+  - a plain query string is parsed without Rack's parser (spec'd against it)
+  - params are merged in place
+  - the request object and params are made lazily
+  - a lighter Response
+  - template lookups don't allocate, the common `erb` call reads its options directly, and missing implicit layouts
+    are cached (the per-render `stat` of views/layout.erb is gone)
+- Against Sinatra on the same harness (interpreter, recording bodies): 211.7 → 17.1 µs on the larger app's table,
+  78.1 → 12.3 µs on the smaller one's.
+- What's left is mostly the per-request objects (Dispatch, scope, response, headers, the Rack tuple) and the GC that
+  sweeps them, plus ERB's buffers. Two levers were considered and left alone: replacing `throw` for a finished route
+  (about 70 ns) and sharing a frozen empty body (one allocation, but it would break code appending to
+  `response.body`).
+
 **6–7. Migrating TMDB's apps.** The smaller app goes first as the dry run. Both migrations use a codemod for
   controller declarations and mounting, the phase 0 differential test, each app's spec suite, and a shadow mode:
   Sinatra serves the request, Reprise computes its match, and we log any disagreement before cutting over. The
