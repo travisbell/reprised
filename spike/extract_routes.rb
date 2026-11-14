@@ -26,8 +26,13 @@ module RepriseExtract
     def records = @records ||= []
 
     def record(app, type, verb, path, options, block)
-      # Sinatra's `get` defines a HEAD route alongside every GET route. Reprise falls back to GET for HEAD instead.
-      return if verb == "HEAD"
+      # Sinatra's `get` defines a HEAD route right after each GET one (Sinatra::MultiRoute's `route :get` doesn't).
+      # Reprise's `get` does the same, so that's recorded as the GET route's head: true, not as a route of its own.
+      last = records.last
+      if verb == "HEAD" && last && last[:verb] == "GET" && last[:app] == app.name && last[:path] == serialize_path(path)
+        last[:head] = true
+        return
+      end
 
       file, line = block&.source_location
       records << {
@@ -35,10 +40,11 @@ module RepriseExtract
         app: app.name,
         type: type,
         verb: verb,
+        head: (false if verb == "GET"),
         path: serialize_path(path),
         options: serialize_options(app, options),
         source: file && "#{file.delete_prefix(ROOT)}:#{line}"
-      }
+      }.compact
     end
 
     def serialize_path(path)
@@ -90,6 +96,8 @@ else
 end
 
 records = RepriseExtract.records.select { it[:app] == app.name }
+# An app that's moved to Reprise defines no Sinatra routes: don't overwrite a table with an empty one.
+abort("#{kind}: #{app} defines no Sinatra routes; extract from a checkout that's still on Sinatra") if records.none? { it[:type] == "route" }
 
 File.write(out, JSON.pretty_generate({
   app: kind,

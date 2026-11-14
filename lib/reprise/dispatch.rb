@@ -110,7 +110,7 @@ module Reprise
     def route!
       pass_block = nil
 
-      @app.router.each(route_lane, path) do |route, route_params|
+      @app.router.each(env["REQUEST_METHOD"], path) do |route, route_params|
         response.delete_header("content-type") unless @pinned_content_type || response.headers.empty?
         enter(route.owner)
 
@@ -144,11 +144,6 @@ module Reprise
     end
 
     def path = env["PATH_INFO"].to_s
-
-    def route_lane
-      method = env["REQUEST_METHOD"]
-      method == "HEAD" && !@runtime.head_lane ? "GET" : method
-    end
 
     def matched(route)
       @route = route

@@ -26,6 +26,35 @@ RSpec.describe "Routing" do
     expect([status, body.to_a, headers["content-length"]]).to eq([200, [], "5"])
   end
 
+  it "answers HEAD with a route defined with route :get only if :head is listed, as Sinatra::MultiRoute does" do
+    mock_app do
+      route(:get, :post, "/session") { "session" }
+      route(:get, :head, "/token") { "token" }
+    end
+
+    expect(app.call(Rack::MockRequest.env_for("/session", method: "HEAD")).first).to eq(404)
+    expect(app.call(Rack::MockRequest.env_for("/token", method: "HEAD")).first).to eq(200)
+    get "/session"
+    expect(body).to eq("session")
+  end
+
+  it "keeps HEAD routes in definition order, among the GET routes that answer HEAD too" do
+    mock_app do
+      get("/movie/:id") { "get" }
+      head("/movie/:id") { headers("x-route" => "head") and "" }
+      head("/person/:id") { headers("x-route" => "head") and "" }
+      get("/person/:id") { "get" }
+    end
+
+    movie = app.call(Rack::MockRequest.env_for("/movie/1", method: "HEAD"))
+    person = app.call(Rack::MockRequest.env_for("/person/1", method: "HEAD"))
+    tv = app.call(Rack::MockRequest.env_for("/tv/1", method: "HEAD"))
+
+    expect([movie[1]["x-route"], movie[1]["content-length"]]).to eq([nil, "3"])
+    expect(person[1]["x-route"]).to eq("head")
+    expect(tv.first).to eq(404)
+  end
+
   it "tries routes in definition order" do
     mock_app do
       get("/movie/:id") { "show #{params[:id]}" }

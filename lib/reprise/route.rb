@@ -3,7 +3,9 @@
 module Reprise
   # A route as defined: what it matches, its options (compiled into +conditions+ when the app is finalized), the
   # method its block compiled to, and its timeout in seconds, if any. +owner+ is the App or Controller that defined it.
-  Route = Data.define(:verb, :path, :options, :conditions, :action, :timeout, :owner, :source_location) do
+  # +head+ is whether it also answers HEAD, as a GET route defined with `get` does (and one defined with `route` doesn't,
+  # as in Sinatra::MultiRoute).
+  Route = Data.define(:verb, :path, :options, :conditions, :action, :timeout, :owner, :source_location, :head) do
     def to_s = "#{verb} #{pattern}"
 
     # The path as written: a pattern ("/movie/:id"), a regexp's source, or an Array's patterns joined with " | ".

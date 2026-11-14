@@ -175,7 +175,7 @@ end
   (`/m%6Fvie`). That matches Sinatra exactly, at Sinatra's cost, for that rare path.
 - `route :get, :post, "/path" do ... end` registers one body under several verbs. It replaces sinatra-contrib
   MultiRoute.
-- HEAD falls back to GET. An optional `trailing_slash: :optional` app setting will make the `/?` suffix unnecessary.
+- HEAD is answered by `get` routes, in their place among any `head` routes, as in Sinatra; `route :get` (MultiRoute) doesn't answer it unless :head is listed. An optional `trailing_slash: :optional` app setting will make the `/?` suffix unnecessary.
   It's off by default for compatibility.
 - `Reprise::Route` (a `Data`) has the verb, path, options, compiled conditions, action, timeout, owner, and source
   location. `Route#pattern` is the path as written, which is what telemetry reports. `App.routes` and `App.filters`

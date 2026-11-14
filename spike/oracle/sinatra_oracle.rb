@@ -114,9 +114,9 @@ class Oracle < Sinatra::Base
       type = record["type"]
       send(type, path, **options) { (env["oracle.#{type}"] ||= []) << index }
     when "route"
-      # Sinatra's `get` also defines a HEAD route for the same path, right after the GET one. The extractor leaves
-      # those out, so put them back.
-      verbs = record["verb"] == "GET" ? ["GET", "HEAD"] : [record["verb"]]
+      # Sinatra's `get` also defines a HEAD route for the same path, right after the GET one; the extractor records it
+      # as head: true. (Tables extracted before it did assume every GET route has one.)
+      verbs = record["verb"] == "GET" && record.fetch("head", true) ? ["GET", "HEAD"] : [record["verb"]]
       verbs.each do |verb|
         route(verb, path, options.dup) do
           env["oracle.route"] = index

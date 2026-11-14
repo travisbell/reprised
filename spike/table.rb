@@ -10,7 +10,7 @@ require_relative "../lib/reprise"
 module Spike
   ROOT = __dir__
 
-  Record = Data.define(:index, :type, :verb, :path, :conditions, :source) do
+  Record = Data.define(:index, :type, :verb, :head, :path, :conditions, :source) do
     def describe = "##{index} #{verb} #{path["value"] || path} (#{source})"
   end
 
@@ -28,16 +28,20 @@ module Spike
       @filters = { "before" => Reprise::Router.new(matcher:), "after" => Reprise::Router.new(matcher:) }
 
       fixture.fetch("records").each do |raw|
-        record = Record.new(index: raw["index"], type: raw["type"], verb: raw["verb"], path: raw["path"],
-          conditions: raw["options"], source: raw["source"])
+        record = Record.new(index: raw["index"], type: raw["type"], verb: raw["verb"], head: Table.head?(raw),
+          path: raw["path"], conditions: raw["options"], source: raw["source"])
         @records[record.index] = record
         router = record.type == "route" ? @routes : @filters.fetch(record.type)
-        router.add(record.type == "route" ? record.verb : :any, self.class.to_pattern(raw["path"]), record)
+        lanes = record.type != "route" ? [:any] : [record.verb, *("HEAD" if record.head)]
+        lanes.each { router.add(it, self.class.to_pattern(raw["path"]), record) }
       end
 
       @routes.finalize!
       @filters.each_value(&:finalize!)
     end
+
+    # Whether a GET record also answers HEAD. Tables extracted before this was recorded assume every GET route does.
+    def self.head?(raw) = raw["verb"] == "GET" && raw.fetch("head", true)
 
     def self.to_pattern(spec)
       case spec["type"]
@@ -50,7 +54,6 @@ module Spike
 
     # What Reprise decides for a request: the route (or nil), its params and content type, and the filters that run.
     def dispatch(verb, path, accept)
-      verb = "GET" if verb == "HEAD"
       content_type = nil
       record, params = @routes.find(verb, path) do |candidate, _params|
         matched, content_type = check_conditions(candidate, accept)

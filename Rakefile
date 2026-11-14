@@ -16,11 +16,15 @@ namespace :spike do
     Bundler.with_unbundled_env { sh("cd #{dir} && #{command}") }
   end
 
+  # Where an app's Sinatra checkout is: TMDB_API_DIR / TMDB_WEB_DIR, or beside this repo. Once an app has moved to
+  # Reprise, point its variable at a checkout (or worktree) that's still on Sinatra.
+  def checkout(app) = ENV.fetch("#{app.upcase.tr("-", "_")}_DIR", "#{WORKSPACE}/#{app}")
+
   desc "Extract route tables from the TMDB apps"
   task :extract do
     APPS.each do |app|
       unbundled("bundle exec ruby #{__dir__}/spike/extract_routes.rb #{app} #{__dir__}/spike/fixtures/#{app}.routes.json",
-        "#{WORKSPACE}/#{app}")
+        checkout(app))
     end
   end
 

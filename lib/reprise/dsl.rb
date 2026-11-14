@@ -32,12 +32,15 @@ module Reprise
 
     # -- Routes ---------------------------------------------------------------------------------------------------
 
+    # `get` also answers HEAD, in its place among the HEAD routes.
     VERBS.each do |verb|
-      define_method(verb.downcase) { |path, options = {}, &block| add_route(verb, path, options, block) }
+      head = verb == "GET"
+      define_method(verb.downcase) { |path, options = {}, &block| add_route(verb, path, options, block, head:) }
     end
 
     # Defines one route for several verbs, and for each of several paths: `route :get, :post, "/session"`.
-    # (Sinatra's own `route(verb, path, options)` is the one-verb form of this.)
+    # (Sinatra's own `route(verb, path, options)` is the one-verb form of this.) As with Sinatra::MultiRoute, its GET
+    # route doesn't answer HEAD: list :head for that.
     def route(*verbs, paths, **options, &block)
       verbs.each { |verb| Array(paths).each { |path| add_route(verb.to_s.upcase, path, options, block) } }
     end
@@ -259,7 +262,7 @@ module Reprise
 
     private
 
-    def add_route(verb, path, options, block)
+    def add_route(verb, path, options, block, head: false)
       ensure_definable!
       raise ArgumentError, "#{verb} #{path} needs a block" unless block
 
@@ -267,7 +270,8 @@ module Reprise
       timeout = options.delete(:timeout)
       route = Route.new(
         verb:, path:, options: options.freeze, conditions: take_pending_conditions,
-        action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location: block.source_location
+        action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location: block.source_location,
+        head:
       )
       definitions(:routes) << route
       route

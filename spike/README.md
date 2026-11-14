@@ -5,6 +5,7 @@ filters, for every route tmdb-web and tmdb-api define. It also measures what tha
 
 ```sh
 bundle exec rake spike          # extract → oracle → diff (needs ~/workspace/tmdb-web and ~/workspace/tmdb-api)
+TMDB_API_DIR=../api-sinatra bundle exec rake spike   # extract from a checkout still on Sinatra, once the app has moved
 bundle exec rake spike:diff     # re-compare only, after changing lib/reprise (MATCHER=trie to try the trie)
 bundle exec rake spike:bench    # Sinatra vs Reprise routing cost
 ```

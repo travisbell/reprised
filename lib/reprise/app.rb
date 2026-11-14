@@ -34,7 +34,7 @@ module Reprise
     # +use_code+, +dump_errors+, +x_cascade+, +raise_errors+:: those settings, read once (raise_errors and dump_errors
     #                                                      are Procs by default, evaluated on every read).
     Runtime = Data.define(
-      :before, :after, :status_handlers, :sinatra_env, :scope_classes, :head_lane,
+      :before, :after, :status_handlers, :sinatra_env, :scope_classes,
       :use_code, :dump_errors, :x_cascade, :raise_errors
     )
 
@@ -97,7 +97,7 @@ module Reprise
           share_helpers unless settings.helper_isolation
           @routes = compiled(:routes).freeze
           @filters = { before: compiled(:before).freeze, after: compiled(:after).freeze }.freeze
-          @router = build_router(@routes) { |route| route.verb }
+          @router = build_router(@routes) { |route| route.head ? [route.verb, "HEAD"] : route.verb }
           @filter_routers = @filters.transform_values { build_router(it) }.freeze
           @error_handlers = errors.transform_values { it.reverse.freeze }.freeze
           check_filter_overlap(@routes)
@@ -196,7 +196,6 @@ module Reprise
           status_handlers: handlers.any? { it.errors.each_key.any?(Integer) },
           sinatra_env: settings.sinatra_env ? true : false,
           scope_classes: @routes.to_h { [it.owner, it.owner <= App ? self : it.owner] }.compare_by_identity.freeze,
-          head_lane: @router.lane?("HEAD"),
           use_code: settings.use_code? ? true : false, dump_errors: settings.dump_errors? ? true : false,
           x_cascade: settings.x_cascade? ? true : false, raise_errors: settings.raise_errors? ? true : false
         )
@@ -204,7 +203,10 @@ module Reprise
 
       def build_router(definitions)
         router = Router.new(matcher: settings.matcher, **settings.mustermann_opts)
-        definitions.each { |definition| router.add(block_given? ? yield(definition) : :any, definition.path || Router::EVERY_PATH, definition) }
+        definitions.each do |definition|
+          lanes = block_given? ? yield(definition) : :any
+          Array(lanes).each { router.add(it, definition.path || Router::EVERY_PATH, definition) }
+        end
         router.finalize!
       end
 

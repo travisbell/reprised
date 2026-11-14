@@ -37,8 +37,8 @@ module Spike
       @record = record
       @records = {}
       fixture.fetch("records").each do |raw|
-        @records[raw["index"]] = Record.new(index: raw["index"], type: raw["type"], verb: raw["verb"], path: raw["path"],
-          conditions: raw["options"], source: raw["source"])
+        @records[raw["index"]] = Record.new(index: raw["index"], type: raw["type"], verb: raw["verb"],
+          head: Table.head?(raw), path: raw["path"], conditions: raw["options"], source: raw["source"])
       end
       records = fixture.fetch("records")
       @owners = records.to_h { [it["index"], (controllers && it["source"][CONTROLLER_FILE]) || :app] }
@@ -83,15 +83,21 @@ module Spike
           target.public_send(type, path, **options) { nil }
         end
       when "route"
-        if @record
-          target.public_send(record["verb"].downcase, path, options) do
+        action = if @record
+          proc do
             env["oracle.route"] = index
             env["oracle.params"] = params.to_h
             env["oracle.content_type"] = response["content-type"]
             ""
           end
         else
-          target.public_send(record["verb"].downcase, path, options) { "" }
+          proc { "" }
+        end
+        # `get` answers HEAD too; a GET route that didn't in Sinatra (Sinatra::MultiRoute's) is defined with `route`.
+        if record["verb"] == "GET" && !Table.head?(record)
+          target.route(:get, path, **options, &action)
+        else
+          target.public_send(record["verb"].downcase, path, options, &action)
         end
       end
     end
