@@ -80,14 +80,14 @@ module Bench
     require_relative "../spike/sample"
     ["tmdb-web", "tmdb-api"].each do |name|
       sample = Spike::Sample.load(name)
-      app = Spike::AppTable.load(name, controllers: name == "tmdb-web").app
+      app = Spike::AppTable.load(name, controllers: name == "tmdb-web", record: false).app
       to_env = ->(request) { env(request["path"], method: request["verb"], accept: request["accept"]) }
       WORKLOADS["#{name} routed"] = [app, sample["routed"].map(&to_env)]
       WORKLOADS["#{name} 404"] = [app, sample["not_found"].map(&to_env)]
     end
   end
 
-  def self.measure(app, envs, seconds: 2.0)
+  def self.measure(app, envs, seconds: 3.0)
     run = -> { envs.each { |env| app.call(env.dup).last.then { it.close if it.respond_to?(:close) } } }
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 0.5
     run.() while Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline # warm up (and let YJIT compile)

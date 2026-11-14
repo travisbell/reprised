@@ -18,11 +18,25 @@ module Reprise
       Negotiation.preferred_type(accept, types.flatten)
     end
 
+    # A query string with nothing to decode or nest: pairs of letters, digits, and "-._~,:", split by "&" and "=".
+    PLAIN_QUERY = /\A[A-Za-z0-9_\-.~,:=&]{1,1024}\z/
+
+    # The query string's params. A plain one ("language=en-US&page=2") is split directly, giving what Rack's parser
+    # would, without its unescaping; anything else goes to Rack's parser.
+    def GET # rubocop:disable Naming/MethodName -- overrides Rack::Request#GET
+      get_header(Rack::RACK_REQUEST_QUERY_HASH) || set_header(Rack::RACK_REQUEST_QUERY_HASH, plain_query || super)
+    rescue Rack::Utils::ParameterTypeError, Rack::Utils::InvalidParameterError => error
+      raise BadRequest, "Invalid query parameters: #{Rack::Utils.escape_html(error.message)}"
+    end
+
     alias_method :secure?, :ssl?
 
     def forwarded? = !forwarded_authority.nil?
     def safe? = get? || head? || options? || trace?
     def idempotent? = safe? || put? || delete? || link? || unlink?
+
+    # Whether the request has a body Rack would parse into params.
+    def form_body? = form_data? || parseable_data?
 
     # Rack's params, with parse failures raised as BadRequest (400) rather than a 500.
     def params
@@ -31,6 +45,22 @@ module Reprise
       raise BadRequest, "Invalid query parameters: #{Rack::Utils.escape_html(error.message)}"
     rescue EOFError => error
       raise BadRequest, "Invalid multipart/form-data: #{Rack::Utils.escape_html(error.message)}"
+    end
+
+    private
+
+    def plain_query
+      query = query_string
+      return unless PLAIN_QUERY.match?(query)
+
+      query.split("&").each_with_object({}) do |pair, params|
+        next if pair.empty?
+
+        key, value = pair.split("=", 2)
+        return nil if key.empty? # Rack has its own rules for those
+
+        params[key.force_encoding(Encoding::UTF_8)] = value&.force_encoding(Encoding::UTF_8)
+      end
     end
   end
 end

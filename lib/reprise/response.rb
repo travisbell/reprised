@@ -8,6 +8,23 @@ module Reprise
   class Response < Rack::Response
     DROP_BODY_STATUSES = [204, 304].freeze
 
+    # Rack::Response#initialize, for the empty response Reprise starts with, without making the Method object only
+    # #write uses (it's made on first #write instead).
+    def initialize
+      @status = 200
+      @headers = Rack::Headers.new
+      @writer = nil
+      @block = nil
+      @body = []
+      @buffered = true
+      @length = nil
+    end
+
+    def write(chunk)
+      @writer ||= method(:append)
+      super
+    end
+
     def body=(value)
       value = value.body while value.is_a?(Rack::Response)
       @body = value.is_a?(String) ? [value.to_str] : value

@@ -92,8 +92,16 @@ module Reprise
       nil
     end
 
-    # Sinatra's params for a regexp pattern: its named captures, plus every capture, unescaped, as "captures".
+    # Sinatra's params for a regexp pattern: its named captures, plus every capture, unescaped, as "captures". Without
+    # named groups there are only the captures, from one match (Mustermann's params would match again).
     def self.regexp_params(pattern, path)
+      if pattern.regexp.names.empty?
+        return unless (match = pattern.regexp.match(path))
+
+        captures = match.captures.map { URI_PARSER.unescape(it) if it }
+        return captures.empty? ? {} : { "captures" => captures }
+      end
+
       return unless (params = pattern.params(path))
 
       captures = pattern.match(path).captures.map { URI_PARSER.unescape(it) if it }
@@ -122,9 +130,10 @@ module Reprise
       end
     end
 
-    # A Sinatra pattern made only of literal segments and whole-segment params, like "/tv/:id/season/:number/?",
-    # matched by comparing path segments rather than with Mustermann's regexp. It's used only for paths with no "%", "?"
-    # or "#", where Mustermann would decode nothing, so the params are the same strings Mustermann would give.
+    # A Sinatra pattern made only of literal segments and whole-segment params, like "/tv/:id/season/:number/?". It's
+    # matched with a capture-free regexp, which allocates nothing (most candidates don't match), and its params are
+    # taken only once it has. It's used only for paths with no "%", "?" or "#", where Mustermann would decode nothing, so
+    # the params are the same strings Mustermann would give.
     class SimplePattern
       SHAPE = %r{\A((?:/(?:[\w\-.~]+|:[A-Za-z_]\w*))+)(/\?|/)?\z}
       PARAM = /\A:([A-Za-z_]\w*)\z/
@@ -142,55 +151,49 @@ module Reprise
         new(segments.freeze, trailing)
       end
 
+      # The paths this pattern matches, if it has no params (so a path can be compared whole), else nil.
+      attr_reader :paths
+
       # +segments+: Symbols for literal segments (as Symbols, so they can't be confused with param names) and Strings
       # for param names. +trailing+: whether the path may (:optional), must (:required), or mustn't (:forbidden) end
       # with "/".
       def initialize(segments, trailing)
-        @segments = segments
-        @literals = segments.map { it.is_a?(Symbol) ? it.name.freeze : nil }.freeze
-        @size = segments.size
-        @trailing = trailing
-        # With no params, the paths it matches, compared whole.
-        unless segments.any?(String)
-          base = segments.empty? ? "" : "/#{@literals.join("/")}"
+        @names = segments.grep(String).freeze
+        literals = segments.map { it.is_a?(Symbol) ? it.name : nil }
+        ending = { optional: "/?", required: "/", forbidden: "" }.fetch(trailing)
+
+        if @names.empty?
+          base = segments.empty? ? "" : "/#{literals.join("/")}"
           @paths = case trailing
           when :forbidden then [base.empty? ? "/" : base]
           when :required then ["#{base}/"]
           else [base, "#{base}/"].reject(&:empty?)
           end.freeze
+        else
+          check = literals.map { it ? Regexp.escape(it) : "[^/]+" }
+          extract = literals.map { it ? Regexp.escape(it) : "([^/]+)" }
+          @check = Regexp.new("\\A/#{check.join("/")}#{ending}\\z")
+          @extract = Regexp.new("\\A/#{extract.join("/")}#{ending}\\z")
         end
         freeze
       end
 
-      # The paths this pattern matches, if it has no params (so a path can be compared whole), else nil.
-      attr_reader :paths
+      # Params for +path+ (a plain path), or nil.
+      def params(path)
+        return unless @check.match?(path)
 
-      # Params for a path split into +parts+ (its segments) and +trailing_slash+, or nil.
-      def params(parts, trailing_slash)
-        return if parts.size != @size
-        return if trailing_slash ? @trailing == :forbidden : @trailing == :required
-
-        params = nil
-        index = 0
-        while index < @size
-          part = parts[index]
-          if (literal = @literals[index])
-            return unless part == literal
-          else
-            return if part.empty?
-
-            (params ||= {})[@segments[index]] = part
-          end
-          index += 1
-        end
-        params || {}
+        captures = @extract.match(path).captures
+        params = {}
+        @names.each_with_index { |name, index| params[name] = captures[index] }
+        params
       end
     end
 
     class IndexLane
       include Composites
 
-      Candidate = Data.define(:entry, :pattern, :regexp, :simple)
+      # +check+ is the pattern's own regexp, for a match? test (no MatchData) before asking Mustermann for params.
+      Candidate = Data.define(:entry, :pattern, :regexp, :simple, :check)
 
       class Node
         # +candidates+ are the patterns indexed here; +reachable+, once finalized, are those plus every ancestor's, in
@@ -225,7 +228,8 @@ module Reprise
 
       def add(pattern, entry)
         simple = SimplePattern.for(pattern.to_s) if @simple && pattern.instance_of?(Mustermann::Sinatra)
-        candidate = Candidate.new(entry:, pattern:, regexp: pattern.is_a?(Mustermann::Regular), simple:)
+        check = pattern.regexp if pattern.respond_to?(:regexp)
+        candidate = Candidate.new(entry:, pattern:, regexp: pattern.is_a?(Mustermann::Regular), simple:, check:)
         node = literal_segments(pattern).reduce(@root) { |parent, segment| parent.children[segment] ||= Node.new }
         node.candidates << candidate
         @all << candidate
@@ -240,10 +244,8 @@ module Reprise
 
       def each_match(path)
         seen = [] if @composite
-        # The path's segments, for simple patterns: only for a path Mustermann wouldn't decode, split once.
+        # Simple patterns match only paths Mustermann wouldn't decode.
         plain = path.start_with?("/") && !path.include?("%") && !path.include?("?") && !path.include?("#")
-        parts = nil
-        trailing_slash = false
 
         candidates(path).each do |candidate|
           params = if candidate.pattern.equal?(EVERY_PATH)
@@ -252,9 +254,10 @@ module Reprise
             if (paths = candidate.simple.paths)
               NO_PARAMS if paths.include?(path)
             else
-              parts, trailing_slash = split(path) unless parts
-              candidate.simple.params(parts, trailing_slash)
+              candidate.simple.params(path)
             end
+          elsif candidate.check && !candidate.check.match?(path)
+            nil
           elsif candidate.regexp
             Router.regexp_params(candidate.pattern, path)
           else
@@ -288,15 +291,6 @@ module Reprise
       end
 
       private
-
-      # A path's segments, and whether it ends with "/": "/movie/550/" is [["movie", "550"], true], "/" is [[], true].
-      def split(path)
-        parts = path.split("/", -1)
-        parts.shift
-        trailing_slash = parts.last == ""
-        parts.pop if trailing_slash
-        [parts, trailing_slash]
-      end
 
       def literal_segments(pattern)
         return [] unless pattern.instance_of?(Mustermann::Sinatra) # (EVERY_PATH and regexps sit at the root)

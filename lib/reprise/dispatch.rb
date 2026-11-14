@@ -70,7 +70,14 @@ module Reprise
     def params = scope.params
 
     def dispatch!
-      params.merge!(request.params).each { |key, value| params[key] = force_encoding(value) if value.is_a?(String) }
+      # Rack's params are the query's merged with the form body's. Without a body that's just the query's, and without
+      # a query string either, there's nothing to parse.
+      request_params = if request.form_body?
+        request.params
+      elsif !env["QUERY_STRING"].to_s.empty?
+        request.GET
+      end
+      request_params&.each { |key, value| params[key] = value.is_a?(String) ? force_encoding(value) : value }
       invoke { route! }
     rescue ::Exception => e # Every error, not just StandardError, goes through the error handlers, as in Sinatra.
       invoke { handle_exception!(e) }
@@ -265,9 +272,13 @@ module Reprise
     # newer one returns nil.
     def error_block!(key, *block_params)
       handlers = error_handlers(key)
-      handlers.each_with_index do |handler, index|
-        result = Action.call(handler.action, scope, block_params)
-        return result unless result.nil? && index < handlers.size - 1
+      last = handlers.size - 1
+      index = 0
+      while index <= last
+        result = Action.call(handlers[index].action, scope, block_params)
+        return result unless result.nil? && index < last
+
+        index += 1
       end
       return false unless key.respond_to?(:superclass) && key.superclass < Exception
 

@@ -24,14 +24,17 @@ module Spike
 
     attr_reader :app, :records
 
-    def self.load(app_name, matcher: :index, controllers: false)
-      new(JSON.parse(File.read("#{ROOT}/fixtures/#{app_name}.routes.json")), matcher:, controllers:)
+    # +record+: whether route and filter bodies record what ran (for the differential test), or do nothing (for
+    # benchmarks, so they measure Reprise rather than the recording).
+    def self.load(app_name, matcher: :index, controllers: false, record: true)
+      new(JSON.parse(File.read("#{ROOT}/fixtures/#{app_name}.routes.json")), matcher:, controllers:, record:)
     end
 
     # The controller file that defined record +index+, or :app.
     def owner_of(index) = @owners.fetch(index)
 
-    def initialize(fixture, matcher:, controllers: false)
+    def initialize(fixture, matcher:, controllers: false, record: true)
+      @record = record
       @records = {}
       fixture.fetch("records").each do |raw|
         @records[raw["index"]] = Record.new(index: raw["index"], type: raw["type"], verb: raw["verb"], path: raw["path"],
@@ -66,19 +69,29 @@ module Spike
     private def define(target, record)
       index = record["index"]
       path = Table.to_pattern(record["path"])
+      # Sinatra records a filter without a path as /.*/; the app, migrated, would define it without one.
+      path = nil if record["type"] != "route" && path == /.*/
       options = record["options"].to_h { |key, value| [key.to_sym, key == "provides" ? value["given"] : value] }
 
       case record["type"]
       when "before", "after"
         type = record["type"].to_sym
         # Sinatra's default filter path is /.*/; the fixtures record it explicitly.
-        target.public_send(type, path, **options) { (env["oracle.#{type}"] ||= []) << index }
+        if @record
+          target.public_send(type, path, **options) { (env["oracle.#{type}"] ||= []) << index }
+        else
+          target.public_send(type, path, **options) { nil }
+        end
       when "route"
-        target.public_send(record["verb"].downcase, path, options) do
-          env["oracle.route"] = index
-          env["oracle.params"] = params.to_h
-          env["oracle.content_type"] = response["content-type"]
-          ""
+        if @record
+          target.public_send(record["verb"].downcase, path, options) do
+            env["oracle.route"] = index
+            env["oracle.params"] = params.to_h
+            env["oracle.content_type"] = response["content-type"]
+            ""
+          end
+        else
+          target.public_send(record["verb"].downcase, path, options) { "" }
         end
       end
     end
