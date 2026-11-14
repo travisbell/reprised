@@ -17,6 +17,7 @@ migrating TMDB's apps (phases 6–7).
 | 4 | Apps that define everything on one reopened app class (`class API < Sinatra::Base` in many files) are first-class. Multi-verb `route`, `json`, `mime_type`, and `configure :env` are core |
 | 5 | Tests use RSpec |
 | 6 | Routing uses a literal-segment index over Mustermann patterns, not `Mustermann::Set`'s trie (phase 0, §3) |
+| 7 | Mustermann 3.1+ or 4 (decided 2026-11-14): Resque depends on Sinatra, which pins Mustermann ~> 3.0, so apps with Resque can't bundle 4 yet. The index matcher works identically on both; only the experimental trie needs 4. CI tests both |
 
 ---
 

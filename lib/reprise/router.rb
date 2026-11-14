@@ -26,8 +26,8 @@ module Reprise
   #          definition order. Each candidate is matched by its own Mustermann pattern, so matching is exactly what
   #          Sinatra does; only the candidate list is shorter. A path containing "%" tries every pattern, since
   #          Mustermann matches literals against their percent-encoded forms ("/m%6Fvie").
-  # [:trie]  Mustermann::Set's trie. Experimental: Mustermann 4.0.1's trie misses several Sinatra pattern forms
-  #          ("/a/?" on "/a", "/a/*" on "/a/", "/tv/:id/edit/?*"), see docs/upstream/mustermann-trie.md.
+  # [:trie]  Mustermann::Set's trie (Mustermann 4 only). Experimental: Mustermann 4.0.1's trie misses several Sinatra
+  #          pattern forms ("/a/?" on "/a", "/a/*" on "/a/", "/tv/:id/edit/?*"), see docs/upstream/mustermann-trie.md.
   class Router
     # What a lane stores for each route or filter: the caller's value, and the definition index that orders it.
     # +composite+ is set for an Array of patterns, which matches once however many of its patterns match.
@@ -210,7 +210,11 @@ module Reprise
       RegexpCandidate = Data.define(:entry, :pattern)
 
       def initialize
-        MustermannFixes.apply!
+        begin
+          MustermannFixes.apply!
+        rescue LoadError
+          raise ArgumentError, "matcher: :trie needs Mustermann 4 (Mustermann::Set); the default :index works with 3 or 4"
+        end
         # Ordered by Entry#index here rather than with strict_order, which computes every match and sorts them anyway.
         # No cache: it shares Match objects, and their params hashes, between requests.
         @set = Mustermann::Set.new(use_trie: true, use_cache: false)

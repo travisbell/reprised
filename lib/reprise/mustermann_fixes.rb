@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "mustermann"
-require "mustermann/set"
 
 module Reprise
   # Fixes for bugs in the Mustermann release Reprise depends on. Each one is applied only if a self-test shows the
@@ -32,6 +31,7 @@ module Reprise
       def apply!
         return if @applied
 
+        require "mustermann/set"
         @applied = true
         Mustermann::Set.const_get(:Trie).prepend(TrieFastPath) if trie_fast_path_broken?
       end

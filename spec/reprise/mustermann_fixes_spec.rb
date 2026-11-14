@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe Reprise::MustermannFixes do
+RSpec.describe Reprise::MustermannFixes, if: Gem.loaded_specs["mustermann"].version >= Gem::Version.new("4") do
   it "fixes the trie's fast path for a capture followed by more pattern" do
     described_class.apply!
     set = Mustermann::Set.new(use_trie: true, use_cache: false)

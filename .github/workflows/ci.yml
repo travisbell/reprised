@@ -8,6 +8,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Mustermann 3 is what Sinatra (and so Resque) pins; 4 is current.
+        mustermann: ["~> 3.1", "~> 4.0"]
+    env:
+      MUSTERMANN_VERSION: ${{ matrix.mustermann }}
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1

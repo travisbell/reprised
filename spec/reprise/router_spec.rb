@@ -150,7 +150,7 @@ RSpec.describe Reprise::Router do
     expect { described_class.new(matcher: :linear) }.to raise_error(ArgumentError, /unknown matcher/)
   end
 
-  describe "with the trie matcher" do
+  describe "with the trie matcher", if: Gem.loaded_specs["mustermann"].version >= Gem::Version.new("4") do
     it "yields matches in definition order" do
       routes = router(matcher: :trie) do
         add("GET", "/movie/:id", :show)
