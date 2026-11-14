@@ -69,7 +69,7 @@ module Reprise
       add_route("GET", path, options, proc {
         # The block runs once the connection is upgraded, after the route has returned, so it keeps the route's params.
         scope = self
-        route_params = params
+        route_params = params.dup
         halt(adapter.open(env, **adapter_options) do |connection|
           scope.instance_variable_set(:@params, route_params)
           Reprise.with_current(scope) { Action.call(handler, scope, [connection]) }

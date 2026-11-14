@@ -95,6 +95,8 @@ module Reprise
 
           matched(route)
           before_filters! unless @filtered
+          # Sinatra sets it as the route's body starts, so it's unset for a request a before filter turned away.
+          env["sinatra.route"] = route.to_s if settings.sinatra_env
           catch(:pass) do
             route_eval { RouteTimeout.run(route, route.timeout) { Action.call(route.action, scope, block_values(route_params)) } }
           end
@@ -120,7 +122,6 @@ module Reprise
       @route = route
       scope.instance_variable_set(:@route, route)
       env["reprise.route"] = route
-      env["sinatra.route"] = route.to_s if settings.sinatra_env
     end
 
     # Makes the scope an instance of +owner+, the class that defined the route about to be tried: a controller, or for
@@ -161,22 +162,29 @@ module Reprise
 
     def conditions_met?(definition) = definition.conditions.all? { it.met?(scope) }
 
-    # Merges route or filter params into params while the block runs, keeping the request's params where the pattern's
-    # are nil, and restores them afterwards. After an exception they're kept, for the error handler.
+    # Merges a route's or filter's pattern params into params while the block runs, keeping the request's params where
+    # the pattern's are nil. Afterwards only the pattern's own keys are put back: each to the value it had before, or
+    # removed if it had none. So changes the block makes to params last (a filter can add params for the route), as in
+    # Sinatra, but a filter's :id can't erase the route's (Sinatra deletes the key). After an exception params are left
+    # as they are, for the error handler.
     def with_params(extra)
       return yield if extra.empty?
 
       extra.delete("ignore")
       original = params
       force_encoding(extra)
-      self.params = original.merge(extra) { |_key, given, matched| matched || given }
+      merged = original.merge(extra) { |_key, given, matched| matched || given }
+      self.params = merged
       failed = false
       yield
     rescue ::Exception
       failed = true
       raise
     ensure
-      self.params = original if original && !failed
+      if original && !failed
+        current = params
+        extra.each_key { |key| original.key?(key) ? current[key] = original[key] : current.delete(key) }
+      end
     end
 
     # A route block's arguments: a regexp pattern's captures, or the pattern's param values in order.

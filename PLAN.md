@@ -152,8 +152,10 @@ end
   superclasses, then the status). They run in the request's scope, so they see the route's instance variables and
   helpers.
 - `after` filters always run, including after `halt`, as in Sinatra.
-- A filter's params, including a regexp filter's `params["captures"]`, are scoped to that filter. Sinatra leaks
-  captures into the route that runs after it.
+- A filter's (or route's) pattern params are merged in while it runs. Afterwards only those keys are put back, each
+  to its earlier value or removed, so changes the block made to params last (a filter can add params for the route)
+  as in Sinatra. Unlike Sinatra, a filter's `:id` can't erase the route's `:id`, and a regexp filter's
+  `params["captures"]` doesn't leak into the route after it.
 
 ### Routing
 

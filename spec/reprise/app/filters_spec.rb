@@ -37,6 +37,18 @@ RSpec.describe "Filters" do
     expect(body).to eq("550 550")
   end
 
+  it "can add params for the route, as in Sinatra" do
+    mock_app do
+      before("/discover/*") { params[:genre] ||= "28" }
+      get("/discover/movie") { "#{params[:genre]} #{params[:splat].inspect}" }
+      after("/discover/*") { response["x-genre"] = params[:genre].to_s }
+    end
+
+    get "/discover/movie"
+
+    expect([body, response_headers["x-genre"]]).to eq(["28 nil", "28"])
+  end
+
   it "see the matched route" do
     mock_app do
       before { @route = route.to_s }

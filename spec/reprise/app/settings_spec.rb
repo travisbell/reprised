@@ -131,6 +131,24 @@ RSpec.describe "Settings and app definition" do
     expect(seen["sinatra.error"]).to be_a(ArgumentError)
   end
 
+  it "sets sinatra.route only once a route's body starts, as Sinatra does" do
+    seen = {}
+    recorder = Class.new do
+      define_method(:initialize) { |app| @app = app }
+      define_method(:call) { |env| @app.call(env).tap { seen[:route] = env["sinatra.route"] } }
+    end
+    mock_app do
+      set :sinatra_env, true
+      use recorder
+      before { halt 401 }
+      get("/movie/:id") { "" }
+    end
+
+    get "/movie/1"
+
+    expect(seen).to eq(route: nil)
+  end
+
   it "doesn't set Sinatra's env keys by default" do
     mock_app { get("/") { env.key?("sinatra.route").to_s } }
 
