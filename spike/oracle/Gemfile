@@ -4,6 +4,7 @@
 # Sinatra 4.2 requires Mustermann ~> 3.0 and Reprise requires ~> 4.0.
 source "https://rubygems.org"
 
+gem "erubi", "1.13.1" # for bench_templates.rb, with the template engine tmdb-web uses
 gem "mustermann", "3.1.1"
 gem "rack", "~> 3.2"
 gem "sinatra", "4.2.1"

@@ -2,9 +2,13 @@
 
 A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed for Falcon and Async.
 
-**Status:** early. The core app works and matches Sinatra 4.2's routing and dispatch on two production route tables.
-Controllers with private helpers, rendering (ERB, ActionView, Phlex), and Async features come next. See
-[PLAN.md](PLAN.md).
+**Status:** early. These work, and match Sinatra 4.2's routing, dispatch, and rendering on two production apps:
+
+- the core app
+- mountable controllers with private helpers
+- ERB templates, with ActionView and Phlex plugins
+
+Async features come next. See [PLAN.md](PLAN.md).
 
 ```ruby
 require "reprise"

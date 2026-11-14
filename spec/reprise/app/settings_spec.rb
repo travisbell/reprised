@@ -41,6 +41,11 @@ RSpec.describe "Settings and app definition" do
     expect([app.everywhere, app.in_test, app.respond_to?(:in_production)]).to eq([true, true, false])
   end
 
+  it "won't let a setting replace one of the app's methods" do
+    expect { mock_app { set :mount, true } }.to raise_error(ArgumentError, /mount is a method/)
+    expect { mock_app { set :views, "elsewhere" } }.not_to raise_error
+  end
+
   it "warns about Sinatra settings that belong in middleware" do
     expect { mock_app { set :protection, true } }.to output(/`set :protection` has no effect/).to_stderr
   end

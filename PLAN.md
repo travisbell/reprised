@@ -4,7 +4,8 @@ A Rack 3 router with Sinatra's controller DSL, built for Ruby 4.0, Mustermann 4,
 Sinatra that controllers actually use, drops the rest, and is validated against TMDB's production Sinatra apps, so
 those apps can move over with mostly mechanical changes.
 
-**Status:** phases 0 (routing parity), 1 (core app), and 2 (controllers) are done. Phase 3 (rendering) is next.
+**Status:** phases 0 (routing parity), 1 (core app), 2 (controllers), and 3 (rendering) are done. Phase 4 (Async) is
+next.
 
 ### Decisions (2026-11-14)
 
@@ -232,35 +233,46 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
 
 ### ERB (core)
 
-- Templates compile directly with Erubi into methods on a per-app `Templates` module, one per (path, locals-keys)
-  signature, as Tilt and ActionView do. Rendering is then a method call. There's no Tilt.
-- The default engine is `Erubi::CaptureBlockEngine`, so `<%= form_with do %>...<% end %>` block capture works without
-  configuration.
-- The signature is unchanged: `erb :name, layout:, locals:`, and `layout: false`. There's no implicit layout unless
-  `set :default_layout` is set.
-- `partial :name, **locals` is built in: a template with no layout, whose locals are passed as keywords.
-- In production every template compiles eagerly in `finalize!` (warmup). In development, templates recompile on mtime
-  change, with a hook for file watchers and Zeitwerk reload.
+- `Reprise::Template` compiles a template with Erubi once, and each set of local names compiles that into a method.
+  Rendering calls the method on the request scope, so templates see its helpers and instance variables. There's no
+  Tilt.
+- The default engine is `Erubi::CaptureBlockEngine`, so a helper that takes a block of template (`<%= box do %>...
+  <% end %>`) can `capture` it.
+- Sinatra's semantics are kept:
+  - `<%= %>` doesn't escape and `<%== %>` does, unless `escape: true` (per call, or in `set :erb`).
+  - The buffer is `@_out_buf`, saved and restored around nested renders.
+  - `erb :name, layout:, locals:` takes `layout: false`.
+  - A route's template gets `views/layout.erb` if that file exists, and goes without if it doesn't.
+  - Templates rendered inside templates get no layout.
+  - The layout gets the template's locals.
+  - A String is inline template source.
+  - `content_type:` marks the output.
+  - `set :erb, ...` options merge into every call.
+- `partial :name, **locals, &block` is built in: a template with no layout, whose locals are passed as keywords.
+- Templates are cached per app. With `reload_templates` (the default in development), a changed file is recompiled.
+  With `precompile_templates` (the default outside development and test), `finalize!` compiles every `.erb` in the
+  views directory up front.
+- Template line numbers are kept in backtraces.
+- `set` refuses a name that's already one of the app's methods, so a setting can't silently replace part of the app.
 
 ### ActionView plugin
 
-- Ships an ActionView-compatible output buffer as the ERB buffer.
-- Includes the configured ActionView helper modules into the global helper module, and provides what those helpers
-  expect from a controller: `output_buffer`, `capture`, `request.headers`, `protect_against_forgery?`, a real `flash`,
-  and `url_for` for strings.
-- Exposes a memoized `view_context` and `lookup_context` for phlex-rails.
+- `plugin Reprise::Plugins::ActionView, helpers: [...]` makes ERB write to an ActionView-compatible output buffer in
+  `@output_buffer`, so block helpers (`form_tag do`, `tag.div do`) capture their blocks and helper output isn't
+  escaped twice.
+- It adds the given ActionView helper modules to the global helpers.
+- ActionView's own defaults apply: standalone ActionView emits the `utf8` enforcer input that Rails apps turn off.
 
 ### Phlex plugin
 
-- `phlex(Component_or_instance, layout: :"layouts/main", **assigns)` from routes. With a layout, the ERB layout
-  `yield`s the component's output.
-- `render(component)` inside ERB writes into the current buffer. `render` dispatches on its argument: a `Phlex::SGML`
-  goes to Phlex, and a Symbol goes to a template engine, as Sinatra's `render(:erb, ...)` does.
-- Without the ActionView plugin it uses plain Phlex. With it, it uses phlex-rails helper adapters through the shared
-  `view_context`.
-- Components can reach the request through `Reprise.current` instead of passing it through props.
-
----
+- `plugin Reprise::Plugins::Phlex` adds `phlex(component, layout:, locals:)`, and makes `render` take a component, in
+  routes and in ERB (`<%= render Card.new(movie) %>`). With a layout, the ERB layout `yield`s the component's output
+  and gets the locals.
+- Components get the request scope as `context[:reprise]`.
+- With `rails: true` (phlex-rails and the ActionView plugin), components render through a memoized ActionView view
+  context class and a per-request lookup context, so phlex-rails' helper adapters work. That also gives the request
+  ActionDispatch-style `headers`.
+- After phase 4, components will reach the request through `Reprise.current` too.
 
 ## 6. Gem layout
 
@@ -270,8 +282,9 @@ reprise-router/
   lib/reprise.rb                # require "reprise"; module Reprise
   lib/reprise/
     app.rb                      # Rack entry (#call), mount, plugin, finalize!/freeze
-    controller.rb               # per-request scope base: halt/pass/redirect/params/...
-    dsl.rb                      # get/post/.../before/after/error/condition/helpers
+    controller.rb               # controllers and the per-request scope
+    dispatch.rb                 # the request flow: routing, filters, errors, scope hand-off
+    dsl.rb                      # get/post/.../before/after/error/condition/helpers/set
     router.rb                   # lanes (verbs, filters) + literal-segment index over Mustermann patterns
     negotiation.rb              # Accept parsing, preferred_type, mime_types (Sinatra semantics, stable sort)
     mustermann_fixes.rb         # self-testing patches for Mustermann bugs
@@ -279,7 +292,7 @@ reprise-router/
     conditions.rb               # provides + custom registry
     params.rb                   # indifferent params
     request.rb  response.rb     # thin Rack::Request / Rack::Response subclasses
-    templates.rb                # Erubi compiler + cache
+    templates.rb                # Template (Erubi compiler), erb/partial/render/capture, lookup + cache
     async.rb                    # Fiber[] context, concurrently, timeouts
     streaming.rb                # stream, event_stream
     plugins/{action_view,phlex,opentelemetry,websocket}.rb
@@ -337,7 +350,14 @@ Deferred: `trailing_slash: :optional`, and `stream` (phase 4).
   That one is the same overlap the earlier manual audit found, and the boot-time check reports it.
 - Mounting controllers costs about 2 µs per request.
 
-**3. Rendering.** Erubi templates, `partial`, the ActionView plugin, the Phlex plugin.
+**3. Rendering. Done 2026-11-14.**
+- ERB templates, `partial`, `render`, and `capture`, plus the ActionView and Phlex (plain and `rails: true`) plugins.
+- 147 specs.
+- **All 699 of the larger app's templates compile** under Reprise with the ActionView plugin's options, in 0.22 s
+  (`spike/compile_views.rb`).
+- A layout + template + 20-item partial through a full Rack call costs **22.7 µs, against 81.6 µs** for Sinatra 4.2
+  with Tilt.
+- Erubi became a runtime dependency. ActionView, Phlex, and phlex-rails are optional.
 
 **4. Async.** `Fiber[]` context, `concurrently`, timeouts, `stream`/`event_stream`, WebSocket routes, an
   Async::Safe CI job, and Falcon integration tests.

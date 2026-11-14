@@ -14,7 +14,8 @@ bundle exec rake spike:bench    # Sinatra vs Reprise routing cost
 | Extract | `extract_routes.rb` | the app's own (it boots the app) | `fixtures/<app>.routes.json`: every route and filter, in Sinatra's order, with options and source |
 | Oracle | `oracle/sinatra_oracle.rb` | `oracle/Gemfile` (Sinatra 4.2.1, Mustermann 3.1.1) | `results/<app>.oracle.jsonl`: Sinatra's decision for each generated request |
 | Diff | `differential.rb` (with `table.rb`, `app_table.rb`) | this gem's (Mustermann 4) | differences, grouped; exits 1 if any. Runs at three levels: `router` (the router directly), `app` (a `Reprise::App` built from the table, called through Rack), and `controllers` (the same, with each controller file's definitions in its own mounted `Reprise::Controller`) |
-| Bench | `oracle/bench_sinatra.rb`, `../bench/routing.rb` | both | µs per request |
+| Bench | `oracle/bench_sinatra.rb`, `../bench/routing.rb`; `oracle/bench_templates.rb`, `../bench/templates.rb` | both | µs per request |
+| Compile views | `compile_views.rb VIEWS_DIR` | this gem's | compiles every `.erb` with the ActionView plugin's options; reports failures |
 
 The oracle runs in its own bundle because Sinatra 4.2 requires Mustermann ~> 3.0.
 

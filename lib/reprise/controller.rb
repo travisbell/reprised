@@ -28,6 +28,8 @@ module Reprise
   class Controller
     extend DSL
     include Helpers
+    include Templates
+    include Template::Methods
 
     class << self
       # The app this controller is mounted in.
@@ -44,8 +46,6 @@ module Reprise
       def use(*)
         raise ArgumentError, "middleware belongs to the app; `use` it in #{app || "the app"}"
       end
-
-      def environment = settings.environment
 
       # Called by App.mount: gives the controller the app's helpers, and its settings.
       def mounted_in(app)
@@ -71,6 +71,7 @@ module Reprise
       @response = Response.new
       @params = Params.new
       @route = nil
+      @__default_layout = :layout
     end
 
     def settings = self.class.settings

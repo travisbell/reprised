@@ -25,6 +25,7 @@ Gem::Specification.new do |spec|
   spec.files = Dir["lib/**/*.rb", "README.md", "LICENSE.txt"]
   spec.require_paths = ["lib"]
 
+  spec.add_dependency("erubi", "~> 1.13")
   spec.add_dependency("mustermann", "~> 4.0")
   spec.add_dependency("rack", "~> 3.2")
 end

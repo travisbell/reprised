@@ -12,7 +12,7 @@ module Reprise
     # Sinatra settings Reprise doesn't act on: each belongs in config.ru middleware or is gone. Setting one warns.
     IGNORED_SETTINGS = [
       :app_file, :bind, :empty_path_info, :host_authorization, :lock, :logging, :method_override, :port, :protection,
-      :public_dir, :public_folder, :quiet, :reload_templates, :run, :server, :session_secret, :session_store,
+      :public_dir, :public_folder, :quiet, :run, :server, :session_secret, :session_store,
       :sessions, :show_exceptions, :static, :static_cache_control, :static_headers, :strict_paths, :threaded, :traps
     ].freeze
 
@@ -103,8 +103,12 @@ module Reprise
       end
 
       return __send__("#{option}=", value) if respond_to?("#{option}=") && !ignore_setter
+      if respond_to?(option) && !setting?(option)
+        raise ArgumentError, "#{option} is a method of #{self}, not a setting; choose another name"
+      end
 
       warn_ignored_setting(option)
+      (@setting_names ||= []) << option.to_sym
       setter = ->(val) { set(option, val, true) }
       setter = ->(val) { set(option, val.is_a?(Hash) ? value.merge(val) : val, true) } if value.is_a?(Hash)
 
@@ -116,19 +120,24 @@ module Reprise
       self
     end
 
+    # Whether +name+ was defined with `set`, here or in a superclass.
+    def setting?(name)
+      ancestors.any? { it.is_a?(Class) && it.instance_variable_get(:@setting_names)&.include?(name.to_sym) }
+    end
+
     def enable(*options) = options.each { set(it, true) }
     def disable(*options) = options.each { set(it, false) }
 
     # Settings are read from the class: `settings.json_encoder`.
     def settings = self
 
-    def development? = environment == :development
-    def production? = environment == :production
-    def test? = environment == :test
+    def development? = settings.environment == :development
+    def production? = settings.environment == :production
+    def test? = settings.environment == :test
 
     # Runs the block now if the app's environment is one of +envs+ (or if none are given).
     def configure(*envs)
-      yield(self) if envs.empty? || envs.include?(environment.to_sym)
+      yield(self) if envs.empty? || envs.include?(settings.environment.to_sym)
     end
 
     # Registers a media type for an extension in Rack's registry (shared by every app), or looks one up.

@@ -22,6 +22,8 @@ module Reprise
   # The first request finalizes the app: its definitions compile into frozen routers, and no more can be added.
   # Call App.finalize! at boot (before forking, or in Falcon's warmup) to do that up front.
   class App < Controller
+    extend Templates::Lookup
+
     FINALIZE_LOCK = Mutex.new
     FILTER_OVERLAP = [:warn, :raise, :ignore].freeze
     private_constant :FINALIZE_LOCK
@@ -53,6 +55,15 @@ module Reprise
 
       def controllers = @controllers || []
 
+      # Installs a plugin: a module with `install(app, **options)`, such as Reprise::Plugins::ActionView.
+      def plugin(plugin, **options)
+        ensure_definable!
+        plugin.install(self, **options)
+        (@plugins ||= []) << plugin
+      end
+
+      def plugins = @plugins || []
+
       # The global helpers module: the app compiles its routes, filters, and handlers into it, and every mounted
       # controller includes it. It includes its parent app's.
       def helpers_module
@@ -75,6 +86,7 @@ module Reprise
           @filter_routers = { before: build_router(compiled(:before)), after: build_router(compiled(:after)) }.freeze
           @error_handlers = errors.transform_values { it.reverse.freeze }.freeze
           check_filter_overlap(routes)
+          precompile_views! if settings.precompile_templates?
           @stack = build_stack
           @finalized = true
         end
@@ -187,5 +199,10 @@ module Reprise
     set :json_content_type, :json
     set :helper_isolation, true
     set :filter_overlap, :warn
+    set :root, proc { Dir.pwd }
+    set :views, proc { File.join(root, "views") }
+    set :erb, {}
+    set :reload_templates, proc { development? }
+    set :precompile_templates, proc { !development? && !test? }
   end
 end
