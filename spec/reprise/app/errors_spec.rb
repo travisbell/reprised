@@ -112,6 +112,20 @@ RSpec.describe "Error handling" do
     expect(errors.string).to include("ArgumentError - unhandled:")
   end
 
+  it "logs server errors through the app's dump_errors!, which an app can override" do
+    logged = []
+    mock_app do
+      set :raise_errors, false
+      set :dump_errors, true
+      define_singleton_method(:dump_errors!) { |boom, _env| logged << boom.message }
+      get("/") { raise ArgumentError, "logged" }
+    end
+
+    get "/"
+
+    expect(logged).to eq(["logged"])
+  end
+
   it "answers Reprise errors with their status" do
     mock_app { get("/") { raise Reprise::BadRequest, "bad <input>" } }
 

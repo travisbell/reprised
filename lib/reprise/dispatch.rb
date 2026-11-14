@@ -252,15 +252,7 @@ module Reprise
       handlers.nil? || handlers.empty? ? @app.error_handlers(key) : handlers
     end
 
-    def dump_errors!(boom)
-      message = boom.detailed_message(highlight: false)
-      details = []
-      if (match = message.match(/\A(.*?)(?: \(#{Regexp.quote(boom.class.to_s)}\))?\n/))
-        details = match.post_match.lines(chomp: true)
-        message = match[1]
-      end
-      env["rack.errors"]&.puts(["#{Time.now.strftime("%Y-%m-%d %H:%M:%S")} - #{boom.class} - #{message}:", *details, *boom.backtrace].join("\n\t"))
-    end
+    def dump_errors!(boom) = @app.dump_errors!(boom, env)
 
     # Strings in +data+ (a String, Hash, or Array) re-tagged with the app's encoding, as Sinatra does. Hashes and
     # Arrays are updated in place; frozen strings are copied.

@@ -96,6 +96,18 @@ module Reprise
 
       def finalized? = @finalized == true
 
+      # Logs a server error, when dump_errors is on: by default to env["rack.errors"], as Sinatra does. Override it to
+      # log elsewhere, or to skip errors that are expected.
+      def dump_errors!(boom, env)
+        message = boom.detailed_message(highlight: false)
+        details = []
+        if (match = message.match(/\A(.*?)(?: \(#{Regexp.quote(boom.class.to_s)}\))?\n/))
+          details = match.post_match.lines(chomp: true)
+          message = match[1]
+        end
+        env["rack.errors"]&.puts(["#{Time.now.strftime("%Y-%m-%d %H:%M:%S")} - #{boom.class} - #{message}:", *details, *boom.backtrace].join("\n\t"))
+      end
+
       # Every route, in the order they're tried: the app's own and its mounted controllers', with conditions compiled.
       # Finalizes the app. Used by `reprise routes` and for warming up.
       def routes = @routes || (finalize! && @routes)
