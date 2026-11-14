@@ -130,6 +130,46 @@ RSpec.describe Reprise::Router do
       expect(routes.each(:before, "").to_a).to eq([[:everywhere, {}]])
     end
 
+    it "indexes past params, and finds every pattern when a segment could be a literal or a param" do
+      routes = router do
+        add("GET", "/movie/:id", :show)
+        add("GET", "/movie/popular", :popular)
+        add("GET", "/movie/:id/cast", :cast)
+        add("GET", "/movie/popular/cast", :popular_cast)
+        add("GET", "/movie/:id/?", :show_slash)
+        add("GET", "/movie/*", :splat)
+      end
+
+      expect(values(routes, "/movie/popular")).to eq([:show, :popular, :show_slash, :splat])
+      expect(values(routes, "/movie/popular/")).to eq([:show_slash, :splat])
+      expect(values(routes, "/movie/popular/cast")).to eq([:cast, :popular_cast, :splat])
+      expect(values(routes, "/movie/550/cast")).to eq([:cast, :splat])
+      expect(values(routes, "/movie/")).to eq([:splat])
+    end
+
+    it "indexes a regexp by the literal segments it starts with, and only those" do
+      routes = router do
+        add("GET", %r{/settings/(.*)}, :settings)
+        add("GET", %r{/subscribe/?(.*)}, :subscribe)
+        add("GET", %r{/a|/b/(.*)}, :alternation)
+      end
+
+      expect(values(routes, "/settings/profile")).to eq([:settings])
+      expect(values(routes, "/settingsx")).to eq([])
+      expect(values(routes, "/subscribers")).to eq([:subscribe])
+      expect(values(routes, "/a")).to eq([:alternation])
+    end
+
+    it "finds segments by byte in a path with multibyte characters" do
+      routes = router do
+        add("GET", "/person/:name/credits", :credits)
+        add("GET", "/person/:name", :person)
+      end
+
+      expect(routes.each("GET", "/person/café/credits").to_a).to eq([[:credits, { "name" => "café" }]])
+      expect(routes.each("GET", "/person/café".b).to_a.map(&:first)).to eq([:person])
+    end
+
     it "only indexes literal segments" do
       routes = router do
         add("GET", "/movie/new?", :optional_char)

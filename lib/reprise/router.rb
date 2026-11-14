@@ -200,31 +200,49 @@ module Reprise
       include Composites
 
       # +check+ is the pattern's own regexp, for a match? test (no MatchData) before asking Mustermann for params.
-      Candidate = Data.define(:entry, :pattern, :regexp, :simple, :check)
+      # +order+ is when it was added, which orders candidates exactly (an Array's patterns share their entry's index).
+      Candidate = Data.define(:entry, :pattern, :regexp, :simple, :check, :order)
 
       class Node
         # +candidates+ are the patterns indexed here; +reachable+, once finalized, are those plus every ancestor's, in
-        # definition order: all the patterns a path reaching this node can match.
-        attr_reader :children, :candidates, :reachable
+        # definition order: all the patterns a path reaching this node can match. +wildcard+ is the child for any
+        # non-empty segment (a whole-segment :param).
+        attr_reader :children, :candidates, :reachable, :reachable_with_wildcard
+        attr_accessor :wildcard
 
         def initialize
           @children = {}
+          @wildcard = nil
           @candidates = []
           @reachable = nil
+          @reachable_with_wildcard = nil
         end
 
-        def finalize!(inherited)
-          @reachable = (inherited + @candidates).sort_by! { it.entry.index }.freeze
-          @children.each_value { it.finalize!(@reachable) }
+        def leaf? = @children.empty? && @wildcard.nil?
+
+        # +sibling+ is the parent's wildcard, if it has one. For a path whose last segment matches both this node and
+        # it, both lists are merged here, once.
+        def finalize!(inherited, sibling = nil)
+          @reachable = (inherited + @candidates).sort_by!(&:order).freeze
+          @reachable_with_wildcard = (@reachable | sibling.reachable).sort_by!(&:order).freeze if sibling
+          @wildcard&.finalize!(@reachable)
+          @children.each_value { it.finalize!(@reachable, @wildcard) }
           @children.freeze
           @candidates.freeze
           freeze
         end
       end
 
-      # A pattern segment that matches only itself. Anything else (params, splats, optional or escaped characters,
-      # groups) ends the literal prefix.
+      WILDCARD = Object.new.freeze
+
+      # A pattern segment that matches only itself, and one that's a whole-segment param. Anything else (splats,
+      # optional or escaped characters, groups) ends what's indexed.
       LITERAL_SEGMENT = /\A[\w\-.~]+\z/
+      PARAM_SEGMENT = /\A:[A-Za-z_]\w*\z/
+
+      # A regexp's literal segments: plain characters, each followed by a "/" that isn't optional.
+      REGEXP_LITERAL_SEGMENT = /\G([A-Za-z0-9_~-]+)\/(?![?*+{])/
+      MUSTERMANN_REGEXP = /\A\\A\(\?-mix:(.*)\)\\Z\z/m
 
       def initialize(simple: true)
         @root = Node.new
@@ -236,8 +254,10 @@ module Reprise
       def add(pattern, entry)
         simple = SimplePattern.for(pattern.to_s) if @simple && pattern.instance_of?(Mustermann::Sinatra)
         check = pattern.regexp if pattern.respond_to?(:regexp)
-        candidate = Candidate.new(entry:, pattern:, regexp: pattern.is_a?(Mustermann::Regular), simple:, check:)
-        node = literal_segments(pattern).reduce(@root) { |parent, segment| parent.children[segment] ||= Node.new }
+        candidate = Candidate.new(entry:, pattern:, regexp: pattern.is_a?(Mustermann::Regular), simple:, check:, order: @all.size)
+        node = index_segments(pattern).reduce(@root) do |parent, segment|
+          segment.equal?(WILDCARD) ? (parent.wildcard ||= Node.new) : (parent.children[segment] ||= Node.new)
+        end
         node.candidates << candidate
         @all << candidate
         @composite ||= entry.composite
@@ -276,20 +296,32 @@ module Reprise
         end
       end
 
-      # The candidates for +path+ in definition order: those with no literal prefix, plus those under each literal
-      # segment the path starts with. That's the deepest node the path reaches, whose list was merged at finalize, so
-      # finding them allocates nothing but the segment strings.
+      # The candidates for +path+ in definition order: the patterns indexed at the nodes its segments lead to, through
+      # literal children and wildcards. Usually the path follows one way, to a node whose list was merged at finalize,
+      # so finding them allocates nothing but the segment strings. A path that could go both ways at a segment (a
+      # literal child and a wildcard both fit) has its branches' lists merged.
       def candidates(path)
         return @all if path.include?("%") || !path.start_with?("/")
 
+        length = path.bytesize
         node = @root
         position = 1
 
-        until node.children.empty?
-          segment_end = path.index("/", position) || path.size
-          child = node.children[path.byteslice(position, segment_end - position)] or break
+        until node.leaf?
+          segment_end = path.byteindex("/", position) || length
+          # (Assigned on every pass: a modifier `unless` would leave the last pass's node in place.)
+          exact = node.children.empty? ? nil : node.children[path.byteslice(position, segment_end - position)]
+          wild = segment_end > position ? node.wildcard : nil
+          if exact && wild
+            # Both fit the last segment (with perhaps a trailing "/"): that merge was made at finalize.
+            return exact.reachable_with_wildcard if segment_end >= length - 1
+
+            return branched(path, [exact, wild], segment_end, length)
+          end
+
+          child = exact || wild or break
           node = child
-          break if segment_end >= path.size
+          break if segment_end >= length
 
           position = segment_end + 1
         end
@@ -299,13 +331,83 @@ module Reprise
 
       private
 
-      def literal_segments(pattern)
-        return [] unless pattern.instance_of?(Mustermann::Sinatra) # (EVERY_PATH and regexps sit at the root)
+      # Follows every way the rest of the path leads from +nodes+ (which the segment ending at +segment_end+ reached),
+      # and merges the lists of the nodes each way ends at.
+      def branched(path, nodes, segment_end, length)
+        ends = []
+        while segment_end < length && !nodes.empty?
+          position = segment_end + 1
+          segment_end = path.byteindex("/", position) || length
+          segment = nil
+          following = []
+          nodes.each do |node|
+            exact = node.children.empty? ? nil : node.children[segment ||= path.byteslice(position, segment_end - position)]
+            wild = segment_end > position ? node.wildcard : nil
+            following << exact if exact
+            following << wild if wild
+            ends << node unless exact || wild
+          end
+          nodes = following
+        end
+        ends.concat(nodes)
 
-        source = pattern.to_s
-        return [] unless source.start_with?("/")
+        seen = {}.compare_by_identity
+        ends.each_with_object([]) do |node, merged|
+          node.reachable.each { |candidate| merged << candidate unless seen.key?(candidate) || !(seen[candidate] = true) }
+        end.sort_by!(&:order)
+      end
 
-        source.split("/", -1).drop(1).take_while { LITERAL_SEGMENT.match?(it) }
+      # The segments a pattern is indexed under: its leading literal segments, and for a Sinatra pattern (with default
+      # options), whole-segment params as wildcards, then any literal segments after them. A regexp is indexed by the
+      # literal segments it starts with. Anything else sits at the root.
+      def index_segments(pattern)
+        case pattern
+        when Mustermann::Sinatra
+          return [] unless pattern.instance_of?(Mustermann::Sinatra) && (source = pattern.to_s).start_with?("/")
+
+          segments = []
+          source.split("/", -1).drop(1).each do |segment|
+            if LITERAL_SEGMENT.match?(segment) then segments << segment
+            elsif @simple && PARAM_SEGMENT.match?(segment) then segments << WILDCARD
+            else break
+            end
+          end
+          segments.pop while segments.last.equal?(WILDCARD) && !@simple
+          segments
+        when Mustermann::Regular then regexp_segments(pattern)
+        else []
+        end
+      end
+
+      def regexp_segments(pattern)
+        inner = MUSTERMANN_REGEXP.match(pattern.regexp.source)&.[](1)
+        return [] unless inner&.start_with?("/") && !top_level_alternation?(inner)
+
+        segments = []
+        position = 1
+        while (match = REGEXP_LITERAL_SEGMENT.match(inner, position))
+          segments << match[1]
+          position = match.end(0)
+        end
+        segments
+      end
+
+      # Whether +source+ has a "|" outside any group, which would let it match paths without its prefix.
+      def top_level_alternation?(source)
+        depth = 0
+        escaped = false
+        in_class = false
+        source.each_char do |char|
+          if escaped then escaped = false
+          elsif char == "\\" then escaped = true
+          elsif in_class then in_class = false if char == "]"
+          elsif char == "[" then in_class = true
+          elsif char == "(" then depth += 1
+          elsif char == ")" then depth -= 1
+          elsif char == "|" && depth.zero? then return true
+          end
+        end
+        false
       end
     end
 
