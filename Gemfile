@@ -16,6 +16,7 @@ group :test do
   gem "actionview", "~> 8.1"
   gem "phlex", "~> 2.4"
   gem "phlex-rails", "~> 2.4"
+  gem "sprockets", "~> 4.2"
 
   # Async features, and the integration specs that run Reprise under a real Falcon server.
   gem "async", "~> 2.46"

@@ -6,7 +6,7 @@ A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed 
 
 - the core app
 - mountable controllers with private helpers
-- ERB templates, with ActionView and Phlex plugins
+- ERB templates, with ActionView and Phlex plugins, and a Sprockets plugin for assets
 - Async features: `Reprise.current` for the request from any fiber, per-route timeouts, streaming, Server-Sent
   Events, and WebSocket routes, all tested under Falcon
 

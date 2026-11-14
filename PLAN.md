@@ -56,7 +56,7 @@ non-ERB engines go unused. That decides what Reprise keeps (§3).
 3. **Everything is frozen after boot.** The route table, filters, handlers, and compiled templates freeze on
    `App.finalize!`. Each request allocates one scope object. There is no `settings` proc chain and no app `dup` per
    request.
-4. **Optional parts are plugins.** ActionView, Phlex, OpenTelemetry, WebSocket, and SSE load only when you enable them.
+4. **Optional parts are plugins.** ActionView, Phlex, Sprockets, OpenTelemetry, WebSocket, and SSE load only when you enable them.
    The core depends only on `rack` and `mustermann`.
 5. **We use Ruby 4.0 features without making a show of it:** `Data.define` for value objects, pattern matching on
    matches, endless methods, `it`, and `Fiber[]` storage for request context. Route bodies compile to real methods
@@ -284,6 +284,24 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
   ActionDispatch-style `headers`.
 - After phase 4, components will reach the request through `Reprise.current` too.
 
+### Sprockets plugin
+
+- `plugin Reprise::Plugins::Sprockets, environment:, prefix: "/assets", manifest:, digest:, serve:` sets `assets`,
+  `assets_prefix`, `assets_manifest`, and `assets_digest`, and adds `asset_path` and `asset_exists?` to the global
+  helpers. They read the settings on each call, so a later `set :assets_digest, true` takes effect.
+- `asset_path` gives the manifest's digest path when digests are on and the manifest has the asset, or else the logical
+  path, under the prefix. `asset_exists?` checks the manifest, then resolves the path without compiling the asset.
+- With `serve` (the default unless `digest`), it defines a `get "#{prefix}/*"` route that hands the request to the
+  Sprockets environment, as Sinatra apps do. Being a route, it keeps Sinatra's semantics: routes defined before it
+  under the prefix answer first, filters run, and a missing asset gets Sprockets' own 404 (with `x-cascade: pass`).
+- `Reprise::Plugins::Sprockets::Server` is the Rack middleware form, for config.ru: it answers ahead of the app, and
+  passes anything it has no asset for to the app.
+- It doesn't use sprockets-helpers' global configuration. Precompiling stays a Sprockets task
+  (`Sprockets::Manifest#compile`), reading the app's settings.
+- Checked on the larger app's real asset tree in development: 8,456 asset paths, each with GET, HEAD, and a conditional
+  GET (23,985 requests), give the same status, headers, and body as under Sinatra, apart from two malformed paths (a
+  `..` traversal, which Sprockets refuses with a 403, and a null byte, a 500 in both) whose error responses differ.
+
 ## 6. Gem layout
 
 ```
@@ -305,7 +323,7 @@ reprise-router/
     templates.rb                # Template (Erubi compiler), erb/partial/render/capture, lookup + cache
     async.rb                    # Reprise.current (Fiber[]), route timeouts, Reprise::Timeout
     streaming.rb                # Stream (Rack 3 streaming body), EventStream, stream/event_stream helpers
-    plugins/{action_view,phlex,open_telemetry,telemetry}.rb
+    plugins/{action_view,phlex,sprockets,open_telemetry,telemetry}.rb
     telemetry.rb  telemetry/      # opt-in: request metrics and logs, stall detector, reactor lag
     cli.rb                      # `reprise routes`
   exe/reprise
