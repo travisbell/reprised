@@ -99,7 +99,13 @@ module Reprise
     # text and a few other types (the add_charset setting). With no arguments, returns the current content type.
     def content_type(type = nil, params = {})
       return response["content-type"] unless type
+      # The same few types are set request after request: with no parameters, the header is worked out once per app.
+      return response["content-type"] = settings.content_type_for(type) { build_content_type(type, {}) } if params.empty?
 
+      response["content-type"] = build_content_type(type, params.dup)
+    end
+
+    private def build_content_type(type, params)
       default = params.delete(:default)
       media_type = mime_type(type) || default
       raise ArgumentError, format("Unknown media type: %p", type) if media_type.nil?
@@ -112,7 +118,7 @@ module Reprise
       unless params.empty?
         media_type << ";" << params.map { |key, value| "#{key}=#{value.to_s.match?(/[";,]/) ? value.inspect : value}" }.join(";")
       end
-      response["content-type"] = media_type
+      media_type.freeze
     end
 
     # Sets Content-Disposition, and the content type from the filename's extension if none is set.

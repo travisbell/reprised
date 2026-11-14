@@ -60,6 +60,9 @@ module Reprise
       def error_handlers(key) = errors.fetch(key, []).reverse
     end
 
+    # The instance variables #initialize sets: the request's state, carried over when the scope changes controller.
+    STATE = [:@env, :@request, :@response, :@params, :@route, :@__default_layout].freeze
+
     attr_reader :env, :request, :response, :params
 
     # The Route answering this request, set once one matches (also during before filters). nil for a 404.
@@ -83,7 +86,7 @@ module Reprise
     def provides?(types)
       if (current = response["content-type"])
         types.include?(current) || types.include?(current[/^[^;]+/])
-      elsif (preferred = request.preferred_type(types))
+      elsif (preferred = Negotiation.preferred_type(request.accept, types))
         content_type(preferred)
         true
       else

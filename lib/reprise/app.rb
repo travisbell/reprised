@@ -96,6 +96,16 @@ module Reprise
 
       def finalized? = @finalized == true
 
+      # The content-type header for +type+ (with no parameters), from the block the first time. Bounded, since the
+      # type can come from a request.
+      def content_type_for(type)
+        cache = (@content_types ||= {})
+        cache.fetch(type) do
+          cache.clear if cache.size >= 256
+          cache[type] = yield
+        end
+      end
+
       # Logs a server error, when dump_errors is on: by default to env["rack.errors"], as Sinatra does. Override it to
       # log elsewhere, or to skip errors that are expected.
       def dump_errors!(boom, env)
@@ -154,7 +164,7 @@ module Reprise
 
       def build_router(definitions)
         router = Router.new(matcher: settings.matcher, **settings.mustermann_opts)
-        definitions.each { |definition| router.add(block_given? ? yield(definition) : :any, definition.path || %r{.*}, definition) }
+        definitions.each { |definition| router.add(block_given? ? yield(definition) : :any, definition.path || Router::EVERY_PATH, definition) }
         router.finalize!
       end
 

@@ -101,6 +101,35 @@ RSpec.describe Reprise::Router do
       expect(routes.lanes).to eq(["GET", "POST"])
     end
 
+    it "matches simple patterns by segment exactly as Mustermann does" do
+      patterns = [
+        "/", "/movie", "/movie/", "/movie/?", "/movie/:id", "/movie/:id/?", "/movie/:id/cast", "/tv/:id/season/:number/?",
+        "/manifest.json", "/a/:b/:c", "/a/:id/b/:id", "/:slug", "/u/:user_name-x"
+      ]
+      paths = [
+        "/", "//", "/movie", "/movie/", "/movie//", "/movie/550", "/movie/550/", "/movie/550/cast", "/movie/550/cast/",
+        "/movie/5.5", "/tv/1/season/2", "/tv/1/season/2/", "/tv//season/2", "/manifest.json", "/manifestxjson",
+        "/a/1/2", "/a/1/b/2", "/caf%C3%A9", "/movie/caf%C3%A9", "/movie/a?b", "/MOVIE/1", "movie/1", ""
+      ]
+      patterns.each do |pattern|
+        # Mustermann 3 refuses some (a repeated capture name); there's nothing to compare for those.
+        next unless (Mustermann.new(pattern) rescue nil)
+
+        routes = router { add("GET", pattern, pattern) }
+        paths.each do |path|
+          expected = Mustermann.new(pattern).params(path.empty? ? "/" : path)
+          expect(routes.each("GET", path).to_a.dig(0, 1)).to eq(expected), "#{pattern} on #{path.inspect}"
+        end
+      end
+    end
+
+    it "matches a filter without a path everywhere" do
+      routes = router { add(:before, Reprise::Router::EVERY_PATH, :everywhere) }
+
+      expect(routes.each(:before, "/anything/at/all").to_a).to eq([[:everywhere, {}]])
+      expect(routes.each(:before, "").to_a).to eq([[:everywhere, {}]])
+    end
+
     it "only indexes literal segments" do
       routes = router do
         add("GET", "/movie/new?", :optional_char)

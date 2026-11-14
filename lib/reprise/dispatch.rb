@@ -32,6 +32,9 @@ module Reprise
       @route = nil
       @filtered = false
       @pinned_content_type = false
+      # Until user code (a condition, filter, or route) has run, the scope holds only what Controller#initialize set,
+      # so moving it to another controller needn't look for instance variables to carry over.
+      @pristine = true
     end
 
     def call
@@ -66,10 +69,6 @@ module Reprise
 
     def params = scope.params
 
-    def params=(value)
-      scope.instance_variable_set(:@params, value)
-    end
-
     def dispatch!
       params.merge!(request.params).each { |key, value| params[key] = force_encoding(value) if value.is_a?(String) }
       invoke { route! }
@@ -91,6 +90,7 @@ module Reprise
         enter(route.owner)
 
         passed = with_params(route_params) do
+          @pristine = false
           next unless conditions_met?(route)
 
           matched(route)
@@ -98,7 +98,7 @@ module Reprise
           # Sinatra sets it as the route's body starts, so it's unset for a request a before filter turned away.
           env["sinatra.route"] = route.to_s if settings.sinatra_env
           catch(:pass) do
-            route_eval { RouteTimeout.run(route, route.timeout) { Action.call(route.action, scope, block_values(route_params)) } }
+            route_eval { RouteTimeout.run(route, route.timeout) { run_action(route.action, route_params) } }
           end
         end
 
@@ -110,7 +110,8 @@ module Reprise
         before_filters!
       end
       route_eval(&pass_block) if pass_block
-      raise NotFound
+      # Handled as if raised, without the cost of raising (and of the backtrace nothing reads).
+      handle_exception!(NotFound.new)
     end
 
     def route_lane
@@ -132,7 +133,11 @@ module Reprise
 
       previous = scope
       @scope = klass.allocate
-      previous.instance_variables.each { @scope.instance_variable_set(it, previous.instance_variable_get(it)) }
+      if @pristine
+        Controller::STATE.each { @scope.instance_variable_set(it, previous.instance_variable_get(it)) }
+      else
+        previous.instance_variables.each { @scope.instance_variable_set(it, previous.instance_variable_get(it)) }
+      end
       Reprise.current = @scope
     end
 
@@ -154,7 +159,7 @@ module Reprise
           catch(:pass) do
             next unless conditions_met?(filter)
 
-            Action.call(filter.action, scope, block_values(filter_params))
+            run_action(filter.action, filter_params)
           end
         end
       end
@@ -171,24 +176,39 @@ module Reprise
       return yield if extra.empty?
 
       extra.delete("ignore")
-      original = params
       force_encoding(extra)
-      merged = original.merge(extra) { |_key, given, matched| matched || given }
-      self.params = merged
+      # Merged into params in place, noting what to put back, rather than copying params for every route and filter.
+      current = params
+      previous = nil
+      added = nil
+      extra.each do |key, value|
+        if current.key?(key)
+          (previous ||= {})[key] = current[key]
+          current[key] = value unless value.nil?
+        else
+          (added ||= []) << key
+          current[key] = value
+        end
+      end
       failed = false
       yield
     rescue ::Exception
       failed = true
       raise
     ensure
-      if original && !failed
-        current = params
-        extra.each_key { |key| original.key?(key) ? current[key] = original[key] : current.delete(key) }
+      unless failed
+        previous&.each { |key, value| current[key] = value }
+        added&.each { current.delete(it) }
       end
     end
 
-    # A route block's arguments: a regexp pattern's captures, or the pattern's param values in order.
-    def block_values(route_params) = route_params["captures"] || route_params.values.flatten
+    # Runs a route's or filter's compiled block, with its params as block arguments if it takes any: a regexp
+    # pattern's captures, or the pattern's param values in order.
+    def run_action(action, matched_params)
+      return action.bind_call(scope) if action.arity.zero?
+
+      action.bind_call(scope, *(matched_params["captures"] || matched_params.values.flatten))
+    end
 
     def route_eval = throw(:halt, yield)
 

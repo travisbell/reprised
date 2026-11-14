@@ -31,6 +31,7 @@ end
 
 group :benchmark do
   gem "benchmark-ips"
+  gem "stackprof"
 end
 
 # Reprise supports Mustermann 3.1+ and 4. CI tests both: MUSTERMANN_VERSION="~> 3.1" bundle install.
