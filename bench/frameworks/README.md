@@ -35,24 +35,30 @@ How each framework is set up:
 ## Results (2026-11-14)
 
 Ruby 4.0.9 with YJIT, Apple Silicon. Reprise 0.1.0, Sinatra 4.2.1, Roda 3.110.0, hanami-router 3.0.0 with
-hanami-controller 2.3.2, all on Mustermann 3.1.1.
+hanami-controller 2.3.2, all on Mustermann 3.1.1. Times under 3 µs vary by about ±10% between runs.
 
 | workload | Reprise | Sinatra | Roda | Hanami |
 |---|---|---|---|---|
-| hello | 2.26 µs (13) | 5.01 (56) | **0.72** (11) | 14.82 (227) |
-| params | 4.11 (24) | 7.62 (84) | **2.76** (36) | 13.39 (174) |
-| filters | 4.14 (25) | 8.64 (101) | **1.30** (18) | 16.68 (247) |
-| large table | 2.82 (15.5) | 161.49 (1,964) | **1.15** (15.5) | 15.53 (231) |
-| 404 | 2.68 (14.3) | 349.17 (4,080) | 0.93 (12) | **0.92** (7.3) |
-| erb | **6.85** (39) | 13.96 (122) | 7.95 (48) | n/a |
+| hello | 1.63 µs (13) | 4.94 (56) | **0.72** (11) | 14.65 (227) |
+| params | 3.54 (24) | 7.60 (84) | **2.73** (36) | 13.18 (174) |
+| filters | 3.38 (23) | 8.75 (101) | **1.29** (18) | 16.70 (247) |
+| large table | 2.51 (15.5) | 162.29 (1,964) | **1.15** (15.5) | 15.48 (231) |
+| 404 | 2.31 (13.3) | 350.71 (4,080) | 0.93 (12) | **0.96** (7.3) |
+| erb | **6.04** (39) | 13.80 (122) | 8.00 (48) | n/a |
 
 µs per request (allocations per request). Fastest in bold.
 
 Reading it:
 
-- **Reprise vs Sinatra:** about 2× faster on small apps, and 57× (large table) and 130× (404s) on many routes. Sinatra
+- **Reprise vs Sinatra:** 2–3× faster on small apps, and 65× (large table) and 150× (404s) on many routes. Sinatra
   tries routes one by one, and a 404 tries them all.
-- **Reprise vs Roda:** Roda is 2.5–3.3× faster outside templates. Its routing tree runs as the route block itself, with
-  one object per request; Reprise has Sinatra's model to keep. Reprise renders ERB faster.
+- **Reprise vs Roda:** Roda is 1.3–2.6× faster outside templates, and Reprise renders ERB about 25% faster. Roda's
+  routing tree runs as part of the route block, with one object per request, plain-Hash headers, and nothing to skip.
+  Reprise keeps Sinatra's model (filters, conditions, error handlers, `pass`, controller scopes, Rack::Headers'
+  case-insensitive headers, and `Reprise.current`), and its remaining cost is spread across those. Closing it further
+  would mean dropping one of them.
 - **Hanami:** `Hanami::Action` dominates its cost (configuration read through `method_missing`, `Accept`
   negotiation). Its router alone is fast, as the 404s show.
+
+Earlier on 2026-11-14, before the gap-closing pass, Reprise measured hello 2.26, params 4.11, filters 4.14, large table
+2.82, 404 2.68, and erb 6.85.

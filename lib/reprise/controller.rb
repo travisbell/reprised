@@ -26,6 +26,8 @@ module Reprise
   # Reprise::App is a Controller too: the app's own routes, filters, and methods work the same way, and its helpers
   # are the global ones.
   class Controller
+    NO_HANDLERS = [].freeze
+
     extend DSL
     include Helpers
     include Templates
@@ -56,8 +58,13 @@ module Reprise
         include(app.helpers_module)
       end
 
-      # Error handlers for +key+, newest first.
-      def error_handlers(key) = errors.fetch(key, []).reverse
+      # Error handlers for +key+, newest first: remembered per key once the app is finalized.
+      def error_handlers(key)
+        return errors.fetch(key, NO_HANDLERS).reverse unless app&.finalized?
+
+        lookup = (@error_lookup ||= {}.compare_by_identity)
+        lookup.fetch(key) { lookup[key] = errors.fetch(key, NO_HANDLERS).reverse.freeze }
+      end
     end
 
     # The instance variables #initialize sets: the request's state, carried over when the scope changes controller.

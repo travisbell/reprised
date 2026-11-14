@@ -428,6 +428,20 @@ A bare Rack app costs 0.25 µs (5) in the same harness.
   (about 70 ns) and sharing a frozen empty body (one allocation, but it would break code appending to
   `response.body`).
 
+**Against other frameworks (2026-11-14).** `bench/frameworks` compares Reprise with Sinatra, Roda, and Hanami on six
+workloads. After a pass to close the gap with Roda:
+- Under YJIT, Reprise is 2–3× faster than Sinatra on small apps and 65–150× on many routes.
+- It's 1.3–2.6× behind Roda outside templates, and fastest at ERB. Results are in `bench/frameworks/README.md`.
+- That pass worked out at `finalize!` what an app uses (`App::Runtime`), so requests skip the rest. Filters that apply
+  to every request run as a plain list of blocks. The status-handler pass runs only if there are status handlers.
+  Error-handler lookups are memoized, error settings are read once, HEAD is handled inline (no Rack::Head), there's one
+  catch layer, and header deletes are skipped when there's nothing to delete.
+- What's left is Sinatra's model itself:
+  - two objects per request (Dispatch and the scope)
+  - `catch` frames for `pass`
+  - Rack::Headers' case-insensitive headers
+  - `Reprise.current`
+
 **6–7. Migrating TMDB's apps.** The smaller app goes first as the dry run. Both migrations use a codemod for
   controller declarations and mounting, the phase 0 differential test, each app's spec suite, and a shadow mode:
   Sinatra serves the request, Reprise computes its match, and we log any disagreement before cutting over. The

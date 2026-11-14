@@ -22,7 +22,9 @@ module Reprise
   # what filters set survives a `pass` across controllers.
   class Dispatch
     NO_VALUES = [].freeze
-    private_constant :NO_VALUES
+    NOT_FOUND_BODY = "<h1>Not Found</h1>"
+    BAD_REQUEST_BODY = "<h1>Bad Request</h1>"
+    private_constant :NO_VALUES, :NOT_FOUND_BODY, :BAD_REQUEST_BODY
 
     # Single-owner: one request, on one fiber. Async::Safe (when enabled) reports any concurrent use.
     ASYNC_SAFE = false
@@ -31,6 +33,7 @@ module Reprise
 
     def initialize(app, env)
       @app = app
+      @runtime = app.runtime
       @scope = app.new(env)
       @route = nil
       @filtered = false
@@ -43,7 +46,13 @@ module Reprise
     def call
       previous = Reprise.current
       Reprise.current = scope
-      respond
+      result = respond
+      # A HEAD response keeps its headers (content-length included) and drops its body, as Rack::Head does.
+      if env["REQUEST_METHOD"] == "HEAD"
+        result[2].close if result[2].respond_to?(:close)
+        result[2] = NO_VALUES
+      end
+      result
     ensure
       Reprise.current = previous
     end
@@ -51,8 +60,8 @@ module Reprise
     private
 
     def respond
-      invoke { dispatch! }
-      invoke { error_block!(response.status) } unless env["reprise.error"]
+      dispatch!
+      invoke { error_block!(response.status) } if @runtime.status_handlers && !env["reprise.error"]
 
       unless response["content-type"]
         if scope.body.is_a?(Array) && scope.body[0].respond_to?(:content_type)
@@ -87,7 +96,12 @@ module Reprise
       invoke { handle_exception!(e) }
     ensure
       begin
-        filter!(:after)
+        # A halt from an after filter applies too, so they run in invoke (when there are any).
+        if (filters = @runtime.after)
+          invoke { run_unconditional(filters) } unless filters.empty?
+        else
+          invoke { filter!(:after) }
+        end
       rescue ::Exception => e
         invoke { handle_exception!(e) } unless env["reprise.error"]
       end
@@ -97,19 +111,23 @@ module Reprise
       pass_block = nil
 
       @app.router.each(route_lane, path) do |route, route_params|
-        response.delete_header("content-type") unless @pinned_content_type
+        response.delete_header("content-type") unless @pinned_content_type || response.headers.empty?
         enter(route.owner)
 
         passed = with_params(route_params) do
           @pristine = false
-          next unless conditions_met?(route)
+          next unless route.conditions.empty? || conditions_met?(route)
 
           matched(route)
           before_filters! unless @filtered
           # Sinatra sets it as the route's body starts, so it's unset for a request a before filter turned away.
-          env["sinatra.route"] = route.to_s if settings.sinatra_env
+          env["sinatra.route"] = route.to_s if @runtime.sinatra_env
           catch(:pass) do
-            route_eval { RouteTimeout.run(route, route.timeout) { run_action(route.action, route_params) } }
+            if route.timeout
+              route_eval { RouteTimeout.run(route, route.timeout) { run_action(route.action, route_params) } }
+            else
+              route_eval { run_action(route.action, route_params) }
+            end
           end
         end
 
@@ -129,7 +147,7 @@ module Reprise
 
     def route_lane
       method = env["REQUEST_METHOD"]
-      method == "HEAD" && !@app.router.lane?("HEAD") ? "GET" : method
+      method == "HEAD" && !@runtime.head_lane ? "GET" : method
     end
 
     def matched(route)
@@ -141,7 +159,7 @@ module Reprise
     # Makes the scope an instance of +owner+, the class that defined the route about to be tried: a controller, or for
     # the app's own routes, the app.
     def enter(owner)
-      klass = owner <= App ? @app : owner
+      klass = @runtime.scope_classes[owner] || (owner <= App ? @app : owner)
       return if scope.instance_of?(klass)
 
       previous = scope
@@ -158,9 +176,19 @@ module Reprise
     # route must agree with it rather than replace it (as in Sinatra).
     def before_filters!
       @filtered = true
+      filters = @runtime.before
+      return if filters&.empty?
+
       content_type_before = response["content-type"]
-      filter!(:before)
+      filters ? run_unconditional(filters) : filter!(:before)
       @pinned_content_type = response["content-type"] != content_type_before
+    end
+
+    # Filters that apply to every request run in order, with no matching and no params to merge. Returns nil: in
+    # invoke, a return value would become the body.
+    def run_unconditional(actions)
+      actions.each { |action| catch(:pass) { Action.call(action, scope, NO_VALUES) } }
+      nil
     end
 
     # Runs the filters of +type+ whose pattern matches: the app's, and the matched route's controller's.
@@ -242,15 +270,15 @@ module Reprise
 
     def handle_exception!(boom)
       env["reprise.error"] = boom
-      env["sinatra.error"] = boom if settings.sinatra_env
+      env["sinatra.error"] = boom if @runtime.sinatra_env
       http_status = boom.http_status if boom.is_a?(Error) && boom.respond_to?(:http_status)
-      http_status = boom.code if boom.is_a?(Error) && http_status.nil? && settings.use_code? && boom.respond_to?(:code)
+      http_status = boom.code if boom.is_a?(Error) && http_status.nil? && @runtime.use_code && boom.respond_to?(:code)
       scope.status(http_status&.between?(400, 599) ? http_status : 500)
 
       if scope.server_error?
-        dump_errors!(boom) if settings.dump_errors?
+        dump_errors!(boom) if @runtime.dump_errors
       elsif scope.not_found?
-        scope.headers["x-cascade"] = "pass" if settings.x_cascade?
+        scope.headers["x-cascade"] = "pass" if @runtime.x_cascade
       end
 
       if (result = error_block!(boom.class, boom) || error_block!(scope.status, boom))
@@ -262,12 +290,12 @@ module Reprise
           scope.body(Rack::Utils.escape_html(boom.message))
         else
           scope.content_type("text/html")
-          scope.body("<h1>#{scope.not_found? ? "Not Found" : "Bad Request"}</h1>")
+          scope.body(scope.not_found? ? NOT_FOUND_BODY : BAD_REQUEST_BODY)
         end
       end
 
       return unless scope.server_error?
-      raise boom if settings.raise_errors?
+      raise boom if @runtime.raise_errors
 
       error_block!(Exception, boom)
     end
@@ -293,8 +321,10 @@ module Reprise
 
     def error_handlers(key)
       controller = scope.class
-      handlers = controller.error_handlers(key) unless controller <= App
-      handlers.nil? || handlers.empty? ? @app.error_handlers(key) : handlers
+      return @app.error_handlers(key) if controller.equal?(@app)
+
+      handlers = controller.error_handlers(key)
+      handlers.empty? ? @app.error_handlers(key) : handlers
     end
 
     def dump_errors!(boom) = @app.dump_errors!(boom, env)

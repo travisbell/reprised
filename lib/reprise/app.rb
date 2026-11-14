@@ -24,6 +24,20 @@ module Reprise
   class App < Controller
     extend Templates::Lookup
 
+    # What a request needs to know about the app, worked out once at finalize! so requests skip what the app doesn't
+    # use:
+    # +before+, +after+:: the filters' compiled blocks, when every filter of the type applies to every request (no path,
+    #                     no conditions, the app's own); nil when some need matching, so the router runs them.
+    # +status_handlers+:: whether any error handler is for a status, so a response's status needs looking up.
+    # +scope_classes+:: the scope class for each owner of a route: the app for its own (and its ancestors'), else the
+    #                   controller.
+    # +use_code+, +dump_errors+, +x_cascade+, +raise_errors+:: those settings, read once (raise_errors and dump_errors
+    #                                                      are Procs by default, evaluated on every read).
+    Runtime = Data.define(
+      :before, :after, :status_handlers, :sinatra_env, :scope_classes, :head_lane,
+      :use_code, :dump_errors, :x_cascade, :raise_errors
+    )
+
     FINALIZE_LOCK = Mutex.new
     FILTER_OVERLAP = [:warn, :raise, :ignore].freeze
     private_constant :FINALIZE_LOCK
@@ -87,6 +101,7 @@ module Reprise
           @filter_routers = @filters.transform_values { build_router(it) }.freeze
           @error_handlers = errors.transform_values { it.reverse.freeze }.freeze
           check_filter_overlap(@routes)
+          @runtime = build_runtime
           precompile_views! if settings.precompile_templates?
           @stack = build_stack
           @finalized = true
@@ -128,12 +143,21 @@ module Reprise
       attr_reader :stack
 
       def router = @router || (finalize! && @router)
+      def runtime = @runtime || (finalize! && @runtime)
       def filter_router(type) = (@filter_routers || (finalize! && @filter_routers)).fetch(type)
 
-      # Error handlers for +key+, newest first, from the nearest app class in the hierarchy that has any.
+      # Error handlers for +key+, newest first, from the nearest app class in the hierarchy that has any. Once
+      # finalized, remembered per key: keys are exception classes and statuses, a finite set.
       def error_handlers(key)
+        return find_error_handlers(key) unless @finalized
+
+        lookup = (@error_lookup ||= {}.compare_by_identity)
+        lookup.fetch(key) { lookup[key] = find_error_handlers(key) }
+      end
+
+      def find_error_handlers(key)
         own = (@error_handlers || errors).fetch(key, nil)
-        return @error_handlers ? own : own.reverse if own
+        return @error_handlers ? own : own.reverse.freeze if own
         return superclass.error_handlers(key) if superclass < App
 
         [].freeze
@@ -160,6 +184,22 @@ module Reprise
       # With helper_isolation off, every controller's `helpers` are global, as Sinatra's extensions' helpers are.
       def share_helpers
         controllers.each { helpers_module.include(it.helpers_module) }
+      end
+
+      def build_runtime
+        unconditional = ->(filters) do
+          filters.map(&:action).freeze if filters.all? { it.path.nil? && it.conditions.empty? && it.owner <= App }
+        end
+        handlers = [self, *ancestors.select { it.is_a?(Class) && it < App }, *controllers]
+        Runtime.new(
+          before: unconditional.(@filters[:before]), after: unconditional.(@filters[:after]),
+          status_handlers: handlers.any? { it.errors.each_key.any?(Integer) },
+          sinatra_env: settings.sinatra_env ? true : false,
+          scope_classes: @routes.to_h { [it.owner, it.owner <= App ? self : it.owner] }.compare_by_identity.freeze,
+          head_lane: @router.lane?("HEAD"),
+          use_code: settings.use_code? ? true : false, dump_errors: settings.dump_errors? ? true : false,
+          x_cascade: settings.x_cascade? ? true : false, raise_errors: settings.raise_errors? ? true : false
+        )
       end
 
       def build_router(definitions)
@@ -208,8 +248,8 @@ module Reprise
       end
 
       def build_stack
+        # (HEAD bodies are dropped by Dispatch itself, rather than by Rack::Head.)
         app = ->(env) { Dispatch.new(self, env).call }
-        app = Rack::Head.new(app)
         middleware.reverse_each { |klass, args, options, block| app = klass.new(app, *args, **options, &block) }
         app
       end

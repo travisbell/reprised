@@ -39,7 +39,9 @@ module Reprise
         def block.each = yield(call)
         response.body = block
       elsif value
-        headers.delete("content-length") unless env["REQUEST_METHOD"] == "HEAD" || value.is_a?(Rack::Files::BaseIterator)
+        unless headers.empty? || env["REQUEST_METHOD"] == "HEAD" || value.is_a?(Rack::Files::BaseIterator)
+          headers.delete("content-length")
+        end
         response.body = value
       else
         response.body

@@ -45,7 +45,7 @@ module Reprise
         result = []
       end
 
-      if headers["content-type"] && !headers["content-length"] && body.is_a?(Array)
+      if body.is_a?(Array) && !headers.key?("content-length") && headers.key?("content-type")
         headers["content-length"] = body.sum(&:bytesize).to_s
       end
 
