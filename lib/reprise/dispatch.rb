@@ -16,10 +16,14 @@ module Reprise
   # Exceptions go to error handlers by class, then by status: the matched controller's first, then the app's. A
   # response status (`halt 404`) also goes to the status's handler when no exception was raised.
   #
-  # The scope is an instance of the matched route's controller (or of the app). When a candidate belongs to another
+  # The scope is an instance of the matched route's controller (or of the app), and is Reprise.current while the
+  # request is handled. When a candidate belongs to another
   # controller, the scope becomes an instance of that one, taking over the previous scope's instance variables, so
   # what filters set survives a `pass` across controllers.
   class Dispatch
+    # Single-owner: one request, on one fiber. Async::Safe (when enabled) reports any concurrent use.
+    ASYNC_SAFE = false
+
     attr_reader :scope
 
     def initialize(app, env)
@@ -31,6 +35,16 @@ module Reprise
     end
 
     def call
+      previous = Reprise.current
+      Reprise.current = scope
+      respond
+    ensure
+      Reprise.current = previous
+    end
+
+    private
+
+    def respond
       invoke { dispatch! }
       invoke { error_block!(response.status) } unless env["reprise.error"]
 
@@ -44,8 +58,6 @@ module Reprise
 
       response.finish
     end
-
-    private
 
     def env = scope.env
     def request = scope.request
@@ -83,7 +95,9 @@ module Reprise
 
           matched(route)
           before_filters! unless @filtered
-          catch(:pass) { route_eval { Action.call(route.action, scope, block_values(route_params)) } }
+          catch(:pass) do
+            route_eval { RouteTimeout.run(route, route.timeout) { Action.call(route.action, scope, block_values(route_params)) } }
+          end
         end
 
         pass_block = passed if passed
@@ -117,6 +131,7 @@ module Reprise
       previous = scope
       @scope = klass.allocate
       previous.instance_variables.each { @scope.instance_variable_set(it, previous.instance_variable_get(it)) }
+      Reprise.current = @scope
     end
 
     # Runs before filters, and notes whether one set the content type, which then pins it: `provides` on a later

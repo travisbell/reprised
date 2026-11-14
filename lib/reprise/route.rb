@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 module Reprise
-  # A route as defined: what it matches, its options (compiled into +conditions+ when the app is finalized), and the
-  # method its block compiled to. +owner+ is the App or Controller that defined it.
-  Route = Data.define(:verb, :path, :options, :conditions, :action, :owner, :source_location) do
+  # A route as defined: what it matches, its options (compiled into +conditions+ when the app is finalized), the
+  # method its block compiled to, and its timeout in seconds, if any. +owner+ is the App or Controller that defined it.
+  Route = Data.define(:verb, :path, :options, :conditions, :action, :timeout, :owner, :source_location) do
     def to_s = "#{verb} #{path}"
     def inspect = "#<Reprise::Route #{self} #{source_location&.join(":")}>"
   end

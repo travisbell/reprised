@@ -44,6 +44,34 @@ module Reprise
 
     def routes = @definitions[:routes]
 
+    # A WebSocket endpoint: the block runs with the connection once the request is upgraded, in the request's scope.
+    # Other requests for the path move on to the next route. Options go to async-websocket's Rack adapter (handler:,
+    # protocols:, extensions:), and the app must run under an Async server, such as Falcon.
+    #
+    #   websocket "/live/:channel" do |connection|
+    #     while (message = connection.read)
+    #       connection.write(message)
+    #       connection.flush
+    #     end
+    #   end
+    def websocket(path, options = {}, **adapter_options, &block)
+      raise ArgumentError, "websocket #{path} needs a block" unless block
+
+      require "async/websocket/adapters/rack"
+      adapter = ::Async::WebSocket::Adapters::Rack
+      handler = compile_method("WEBSOCKET #{path}", block)
+      condition { adapter.websocket?(env) }
+      add_route("GET", path, options, proc {
+        # The block runs once the connection is upgraded, after the route has returned, so it keeps the route's params.
+        scope = self
+        route_params = params
+        halt(adapter.open(env, **adapter_options) do |connection|
+          scope.instance_variable_set(:@params, route_params)
+          Reprise.with_current(scope) { Action.call(handler, scope, [connection]) }
+        end)
+      })
+    end
+
     # -- Filters --------------------------------------------------------------------------------------------------
 
     def before(path = nil, **options, &block) = add_filter(:before, path, options, block)
@@ -229,9 +257,11 @@ module Reprise
       ensure_definable!
       raise ArgumentError, "#{verb} #{path} needs a block" unless block
 
+      options = options.dup
+      timeout = options.delete(:timeout)
       route = Route.new(
-        verb:, path:, options: options.dup.freeze, conditions: take_pending_conditions,
-        action: compile_method("#{verb} #{path}", block), owner: self, source_location: block.source_location
+        verb:, path:, options: options.freeze, conditions: take_pending_conditions,
+        action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location: block.source_location
       )
       routes << route
       route

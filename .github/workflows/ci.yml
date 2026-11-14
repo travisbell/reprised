@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+      - name: Lint
+        run: bundle exec rubocop
+      - name: Specs
+        run: bundle exec rspec
+      # The Falcon integration specs again, with Async::Safe reporting concurrent use of single-owner objects.
+      - name: Specs under Async::Safe
+        run: ASYNC_SAFE=1 bundle exec rspec spec/falcon

@@ -4,7 +4,7 @@ A Rack 3 router with Sinatra's controller DSL, built for Ruby 4.0, Mustermann 4,
 Sinatra that controllers actually use, drops the rest, and is validated against TMDB's production Sinatra apps, so
 those apps can move over with mostly mechanical changes.
 
-**Status:** phases 0 (routing parity), 1 (core app), 2 (controllers), and 3 (rendering) are done. Phase 4 (Async) is
+**Status:** phases 0–4 are done: routing parity, the core app, controllers, rendering, and Async. Phase 5 (tooling) is
 next.
 
 ### Decisions (2026-11-14)
@@ -210,24 +210,30 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
 
 ## 4. Falcon + Async at the ground level
 
-- **Request context lives in `Fiber[]`.** `Reprise.current` returns the active scope. Fiber storage is inherited by
-  child tasks, so a `barrier.async { ... }` inside a route (and Phlex components rendered there) can reach the request
-  without threading it through. Nothing uses `Thread.current`.
-- **Concurrency is a built-in helper.** `concurrently { |barrier| ... }` runs independent queries in parallel. It's tied
-  to the request's task, so `halt`, an exception, or a client disconnect stops the children.
-- **Timeouts per route:** `get "/x", timeout: 5` wraps the route in `Async::Task.current.with_timeout` and maps a
-  timeout to 503 or a configurable error class.
-- **Streaming uses Rack 3 streaming bodies** (`body.call(stream)`), which Falcon passes through without buffering.
-  - `stream { |out| ... }` is redone on that, with no EventMachine assumptions.
-  - `event_stream { |sse| sse.event(:update, data) }` provides Server-Sent Events.
-  - Optionally, early flush for ERB/Phlex layouts: send `<head>` (CSS, preload links) before the route's queries
-    finish.
-- **WebSockets as routes:** `websocket "/ws/:channel" do |connection| ... end` on async-websocket's Rack adapter.
-- **Fiber safety by construction:** frozen tables, no shared mutable state, templates compiled at boot in production.
-  It must run clean under `Async::Safe.enable!`, and CI will check that.
-- A native `Protocol::HTTP` adapter is planned for after v1 (phase 8).
-
----
+- **`Reprise.current` is the request scope, kept in fiber storage** (`Fiber[]`). Dispatch sets it, follows the scope
+  into the matched controller, and restores the previous value afterwards. Async tasks inherit fiber storage, so
+  services, Phlex components, and the tasks of an `Async::Barrier` a route starts can all reach the request without
+  passing it along. Nothing uses `Thread.current`.
+- **Concurrency is async's own `Barrier`** (`Barrier do |barrier| ... end`, from the async gem). It's already
+  structured: children are waited for, and stopped on exit or on an exception. A Reprise `concurrently` would only
+  duplicate it, so there isn't one. What Reprise guarantees is that `Reprise.current` works inside it.
+- **Timeouts per route:** `get "/x", timeout: 5` runs the route body under the request's Async task's
+  `with_timeout`. Overrunning raises `Reprise::Timeout` (503), which error handlers can catch. Without an Async server
+  the route runs untimed, with a warning once. Async is only loaded when a route has a timeout.
+- **Streaming uses Rack 3 streaming bodies** (`body.call(stream)`), which Falcon sends as they're written:
+  - `stream { |out| out << chunk }` runs once the server sends the body, with the request's params and
+    `Reprise.current`. A disconnected client ends the block. Sinatra's `keep_open` has no Rack 3 equivalent: to keep
+    a stream open, keep the block running.
+  - `event_stream { |sse| sse.event(:update, data, id:) }` provides Server-Sent Events: `data`, `comment`, and
+    `retry` too, with `text/event-stream`, `no-cache`, and `x-accel-buffering: no`.
+- **WebSockets as routes:** `websocket "/ws/:channel", **adapter_options do |connection| ... end` defines a GET route
+  that matches only upgrade requests. Others fall through to the next route. The block runs in the request's scope,
+  with the route's params, once the connection is upgraded. Options (`handler:`, `extensions:`, `protocols:`) go to
+  async-websocket's Rack adapter.
+- **Fiber safety:** routers and templates are frozen or replaced atomically. `Reprise::Dispatch` is marked
+  single-owner for Async::Safe. CI runs the Falcon integration specs with Async::Safe enabled.
+- **Later:** early flush for ERB/Phlex layouts (send `<head>` before the route's queries finish), and the native
+  Protocol::HTTP adapter (phase 8).
 
 ## 5. Rendering
 
@@ -293,11 +299,12 @@ reprise-router/
     params.rb                   # indifferent params
     request.rb  response.rb     # thin Rack::Request / Rack::Response subclasses
     templates.rb                # Template (Erubi compiler), erb/partial/render/capture, lookup + cache
-    async.rb                    # Fiber[] context, concurrently, timeouts
-    streaming.rb                # stream, event_stream
-    plugins/{action_view,phlex,opentelemetry,websocket}.rb
+    async.rb                    # Reprise.current (Fiber[]), route timeouts, Reprise::Timeout
+    streaming.rb                # Stream (Rack 3 streaming body), EventStream, stream/event_stream helpers
+    plugins/{action_view,phlex}.rb   # (opentelemetry: phase 5)
     test.rb                     # Rack::Test helpers, route assertions
   spec/                         # RSpec + Rack::Test; Falcon integration specs under spec/falcon
+  .github/workflows/ci.yml      # lint, specs, Falcon specs under Async::Safe
   spike/                        # routing parity harness against real Sinatra apps
   bench/                        # routing benchmarks
 ```
@@ -359,8 +366,14 @@ Deferred: `trailing_slash: :optional`, and `stream` (phase 4).
   with Tilt.
 - Erubi became a runtime dependency. ActionView, Phlex, and phlex-rails are optional.
 
-**4. Async.** `Fiber[]` context, `concurrently`, timeouts, `stream`/`event_stream`, WebSocket routes, an
-  Async::Safe CI job, and Falcon integration tests.
+**4. Async. Done 2026-11-14.**
+- `Reprise.current`, route timeouts, `stream`, `event_stream`, and `websocket` routes. `concurrently` was dropped in
+  favor of async's own `Barrier`.
+- 159 specs, including Falcon integration specs. Those run against a real server: concurrent requests, Barrier tasks
+  seeing `Reprise.current`, progressive streaming, SSE, timeouts as 503 through error handlers, and WebSocket upgrade,
+  echo, and adapter options.
+- The whole suite passes with Async::Safe enabled, and a deliberate concurrent use of a `Dispatch` is caught.
+- CI workflow added.
 
 **5. Tooling.** `App.routes` and `reprise routes`, the OpenTelemetry plugin (span name, `http.route`, error skip
   list), and optional `env` compatibility keys (`sinatra.route`/`sinatra.error`) for middleware that reads them.
