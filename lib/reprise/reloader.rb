@@ -25,7 +25,30 @@ module Reprise
   #
   # config.ru, its middleware, and code outside the loader and +files+ aren't reloaded. A response body that streams
   # after the app returns keeps running the code it started with.
+  #
+  # Telemetry::StallDetector doesn't report a stall the loading explains (Reloader.loading_since?): the first requests
+  # after a reload block the event loop while they load code.
   class Reloader
+    @loading = 0
+    @loaded_at = nil
+
+    class << self
+      # Whether the app's code is loading now, or has loaded since +time+ (on the monotonic clock): a reload, or a file
+      # its loader loaded.
+      def loading_since?(time) = @loading.positive? || (!@loaded_at.nil? && @loaded_at >= time)
+
+      # Records that code loaded just now.
+      def loaded! = (@loaded_at = Process.clock_gettime(Process::CLOCK_MONOTONIC))
+
+      # Marks the block as loading code.
+      def loading
+        @loading += 1
+        yield
+      ensure
+        @loading -= 1
+        loaded!
+      end
+    end
     def initialize(app, loader: nil, files: [], wait: 10)
       raise ArgumentError, "give a Zeitwerk loader, files, or both" if loader.nil? && files.empty?
       if loader.respond_to?(:reloading_enabled?) && !loader.reloading_enabled?
@@ -40,7 +63,12 @@ module Reprise
       @failed = false
       @watch = Watch.new(loader)
       @watch.update(app_files)
-      loader.on_load { |_cpath, _value, abspath| @watch.loaded(abspath) } if loader.respond_to?(:on_load)
+      return unless loader.respond_to?(:on_load)
+
+      loader.on_load do |_cpath, _value, abspath|
+        Reloader.loaded!
+        @watch.loaded(abspath)
+      end
     end
 
     def call(env)
@@ -71,8 +99,16 @@ module Reprise
     private
 
     # Loads the app, after the block unloads the old one, and finalizes it.
-    def reload_app
+    def reload_app(&unload)
       @app = nil
+      Reloader.loading { load_app(&unload) }
+    rescue StandardError, ScriptError # ScriptError: a SyntaxError or LoadError in the app's code
+      @app = nil
+      @failed = true
+      raise ReloadError, "Couldn't reload #{@app_name}"
+    end
+
+    def load_app
       files = app_files
       if block_given?
         yield
@@ -84,10 +120,6 @@ module Reprise
       @watch.update(files)
       @failed = false
       @app = app
-    rescue StandardError, ScriptError # ScriptError: a SyntaxError or LoadError in the app's code
-      @app = nil
-      @failed = true
-      raise ReloadError, "Couldn't reload #{@app_name}"
     end
 
     def unload

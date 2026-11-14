@@ -13,12 +13,16 @@ module Reprise
     # Put it near the top of the stack, so every request is in flight from the start. Each event loop's detector starts
     # with its first request (so in each of Falcon's forked workers), and does nothing outside one. A loop blocked for
     # +threshold+ seconds is logged twice: by a watchdog thread while it's blocked, with the backtrace, and by the loop's
-    # heartbeat once it's running again, with the slow requests that finished meanwhile.
+    # heartbeat once it's running again, with the slow requests that finished meanwhile. In development, a stall while
+    # Reprise::Reloader loads the app's code isn't reported.
     class StallDetector
       HEARTBEAT_INTERVAL = 0.25
       WATCHDOG_INTERVAL = 0.5
       MAX_LISTED = 20
       MAX_QUERY_LENGTH = 200
+
+      # Whether the app's code has loaded (or is loading) since +time+, which explains a stall.
+      def self.loading_code_since?(time) = defined?(::Reprise::Reloader) && ::Reprise::Reloader.loading_since?(time)
 
       def initialize(app, threshold: 1.0, request_id: "HTTP_X_REQUEST_ID", query_filter: QueryFilter.new)
         @app = app
@@ -78,7 +82,7 @@ module Reprise
             sleep(HEARTBEAT_INTERVAL)
             @last_beat = Telemetry.monotonic_now
             blocked_for = @last_beat - before - HEARTBEAT_INTERVAL
-            next if blocked_for < @threshold
+            next if blocked_for < @threshold || StallDetector.loading_code_since?(before)
 
             Console.warn(
               StallDetector, "Event loop was blocked",
@@ -97,8 +101,9 @@ module Reprise
           until @stopped
             sleep(WATCHDOG_INTERVAL)
             last_beat = @last_beat
-            blocked_for = Telemetry.monotonic_now - last_beat
-            next if @stopped || blocked_for < @threshold || reported == last_beat
+            # How far past due the next beat is, as the heartbeat measures it.
+            blocked_for = Telemetry.monotonic_now - last_beat - HEARTBEAT_INTERVAL
+            next if @stopped || blocked_for < @threshold || reported == last_beat || StallDetector.loading_code_since?(last_beat)
 
             reported = last_beat
             Console.warn(

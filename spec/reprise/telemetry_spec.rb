@@ -3,6 +3,7 @@
 require "async"
 require "rack/builder"
 require "reprise/plugins/telemetry"
+require "reprise/reloader"
 require_relative "../support/open_telemetry"
 
 # The one element of a list that should have exactly one.
@@ -222,6 +223,15 @@ RSpec.describe Reprise::Telemetry do
           nil while Reprise::Telemetry.monotonic_now - started < 0.5
           "done"
         end
+        # As the first request after a reload does, autoloading the app's code.
+        get("/load") do
+          started = Reprise::Telemetry.monotonic_now
+          until Reprise::Telemetry.monotonic_now - started > 0.5
+            Reprise::Reloader.loaded!
+            nil while Reprise::Telemetry.monotonic_now - started < 0.05
+          end
+          "loaded"
+        end
       end
     end
 
@@ -243,6 +253,33 @@ RSpec.describe Reprise::Telemetry do
       expect(logged["Event loop is blocked"][:backtrace]).to be_an(Array)
       expect(logged["Event loop is blocked"][:in_flight].sole).to include(path: "/block", query: "token=[FILTERED]", request_id: "req-1")
       expect(logged["Event loop was blocked"][:completed_during_stall].sole).to include(path: "/block")
+    end
+
+    it "doesn't report a stall while Reprise::Reloader loads the app's code" do
+      allow(Console).to receive(:warn)
+      app = described_class.new(blocking.tap(&:finalize!), threshold: 0.1)
+
+      Sync do
+        app.call(env_for("/"))
+        sleep(0.05)
+        expect(app.call(env_for("/load")).last).to eq(["loaded"])
+        sleep(0.1)
+      end
+
+      expect(Console).not_to have_received(:warn)
+    end
+
+    it "doesn't take an idle loop's heartbeat interval for a stall" do
+      stub_const("#{described_class}::HEARTBEAT_INTERVAL", 0.2)
+      allow(Console).to receive(:warn)
+      app = described_class.new(blocking.tap(&:finalize!), threshold: 0.1)
+
+      Sync do
+        app.call(env_for("/"))
+        sleep(0.5)
+      end
+
+      expect(Console).not_to have_received(:warn)
     end
 
     it "passes requests through outside an event loop" do

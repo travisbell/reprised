@@ -494,6 +494,8 @@ generic parts of the telemetry TMDB's apps share today, reading Reprise's own en
   request counts), the loader's directories (`all_expected_cpaths`, so ignored paths aren't watched), and `files`.
   Directories count only when their `.rb` files change, so an editor's swap file doesn't cause a reload. There's no
   watcher thread, so it needs no fork hook.
+- The stall detector doesn't report a stall while the app's code loads (a reload, or the autoloads of the requests
+  after it): `Reloader.loading_since?`.
 - **On the smaller app** (one class across 36 required files, plus a Zeitwerk-managed lib), under Falcon: added,
   edited, and removed route files, edits to app and lib files, a syntax error and its fix all reload. A reload takes
   about 115 ms, including `finalize!`. The change check costs about 0.1 ms per request, with 43 files and 25

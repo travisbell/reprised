@@ -72,6 +72,18 @@ RSpec.describe Reprise::Reloader do
       expect(namespace::Web).to be_finalized
     end
 
+    it "says the app's code is loading while it reloads, for the stall detector" do
+      request(reloader, "/")
+      before = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      expect(described_class.loading_since?(before)).to be(false)
+
+      write("greeting.rb", "module #{ns}::Greeting; def self.text = \"hi\"; end\n")
+      request(reloader, "/")
+
+      expect(described_class.loading_since?(before)).to be(true)
+      expect(described_class.loading_since?(Process.clock_gettime(Process::CLOCK_MONOTONIC))).to be(false)
+    end
+
     it "reloads when a file is added" do
       expect(request(reloader, "/farewell")).to eq([200, "none"])
 
