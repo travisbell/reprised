@@ -92,6 +92,30 @@ RSpec.describe "Reprise under Falcon" do
     end
   end
 
+  it "writes the Telemetry plugin's log line once the response has been sent" do
+    require "reprise/plugins/telemetry"
+    lines = []
+    app = Class.new(Reprise::App) do
+      plugin Reprise::Plugins::Telemetry, requests: { log: ->(_env, message, fields) { lines << [message, fields[:route]] } }
+      get("/slow/:id") do
+        stream do |out|
+          out << "a"
+          sleep(0.05)
+          out << "b"
+        end
+      end
+    end
+
+    with_falcon(app) do |client|
+      response = client.get("/slow/1")
+      expect(lines).to be_empty
+
+      expect(response.read).to eq("ab")
+      sleep(0.01)
+      expect(lines).to eq([["GET /slow/1 200", "/slow/:id"]])
+    end
+  end
+
   describe "websockets" do
     it "upgrades the request and runs the block with the connection, in the request's scope" do
       app = Class.new(Reprise::App) do

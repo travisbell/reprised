@@ -1,20 +1,11 @@
 # frozen_string_literal: true
 
-require "opentelemetry/sdk"
-require "opentelemetry-instrumentation-rack"
 require "reprise/plugins/open_telemetry"
 require "rack/builder"
+require_relative "../../support/open_telemetry"
 
 RSpec.describe Reprise::Plugins::OpenTelemetry do
   include Rack::Test::Methods
-
-  # One SDK for the process, as an app has; each example starts with no finished spans.
-  EXPORTER = OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new
-  OpenTelemetry::SDK.configure do |config|
-    config.logger = Logger.new(File::NULL)
-    config.use("OpenTelemetry::Instrumentation::Rack")
-    config.add_span_processor(OpenTelemetry::SDK::Trace::Export::SimpleSpanProcessor.new(EXPORTER))
-  end
 
   let(:skipped) { Class.new(StandardError) }
   let(:options) { {} }
@@ -22,7 +13,7 @@ RSpec.describe Reprise::Plugins::OpenTelemetry do
   attr_reader :app
 
   before do
-    EXPORTER.reset
+    OpenTelemetrySupport::SPANS.reset
     skipped_error = skipped
     plugin_options = options.merge(skip_errors: [skipped_error])
     reprise_app = Class.new(Reprise::App) do
@@ -34,12 +25,12 @@ RSpec.describe Reprise::Plugins::OpenTelemetry do
       get("/skipped") { raise skipped_error }
     end
     @app = Rack::Builder.app do
-      use OpenTelemetry::Instrumentation::Rack::Middlewares::Stable::TracerMiddleware
+      use OpenTelemetrySupport::TRACER_MIDDLEWARE
       run reprise_app
     end
   end
 
-  def span = EXPORTER.finished_spans.last
+  def span = OpenTelemetrySupport::SPANS.finished_spans.last
 
   it "names the span after the route, and sets http.route" do
     get "/movie/550"

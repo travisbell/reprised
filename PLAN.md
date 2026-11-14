@@ -305,7 +305,8 @@ reprise-router/
     templates.rb                # Template (Erubi compiler), erb/partial/render/capture, lookup + cache
     async.rb                    # Reprise.current (Fiber[]), route timeouts, Reprise::Timeout
     streaming.rb                # Stream (Rack 3 streaming body), EventStream, stream/event_stream helpers
-    plugins/{action_view,phlex,open_telemetry}.rb
+    plugins/{action_view,phlex,open_telemetry,telemetry}.rb
+    telemetry.rb  telemetry/      # opt-in: request metrics and logs, stall detector, reactor lag
     cli.rb                      # `reprise routes`
   exe/reprise
   spec/                         # RSpec + Rack::Test; Falcon integration specs under spec/falcon
@@ -441,6 +442,24 @@ workloads. After a pass to close the gap with Roda:
   - `catch` frames for `pass`
   - Rack::Headers' case-insensitive headers
   - `Reprise.current`
+
+**Telemetry. Done 2026-11-14.** Opt-in (`require "reprise/telemetry"`, or `plugin Reprise::Plugins::Telemetry`): the
+generic parts of the telemetry TMDB's apps share today, reading Reprise's own env keys rather than Sinatra's.
+- **`Reprise::Telemetry::Requests`:** counts requests (`app.requests`, by method, status, status class, route pattern,
+  and the app's labels), times them (`app.request.duration`, by status class), and logs a line per request (sampled,
+  except 5xx) with the query's secret-looking parameters filtered. Where the server supports `rack.response_finished`
+  (Falcon does), the line is written once the response is sent, after the request's span has ended. Below the tracer it
+  still carries the trace id, so the separate trace-id middleware isn't needed.
+- **`Reprise::Telemetry::StallDetector`:** a heartbeat and a watchdog thread per event loop log when the loop is blocked,
+  with the requests in flight, the blocked backtrace, and RSS.
+- **`Reprise::Telemetry::ReactorLag`:** samples how late the loop resumes a timer (`reactor.lag`).
+- Per-event-loop services start with each loop's first request, so they need no post-fork hook and work in threaded
+  containers too. Metrics are no-ops until the app configures an SDK provider; `Metrics.add_views` gives it Reprise's
+  histogram buckets, since the SDK doesn't yet apply advised boundaries.
+- Overhead under YJIT, on a hello route: 0.6 µs with metrics and logs off, about 4 µs with SDK metrics (mostly the
+  SDK's own recording), and 1.3 µs more for the log line.
+- Left to the apps: exporters and providers, trace sampling, the Console-to-OpenTelemetry bridge, and
+  infrastructure-specific metrics (database, pools, containers).
 
 **6–7. Migrating TMDB's apps.** The smaller app goes first as the dry run. Both migrations use a codemod for
   controller declarations and mounting, the phase 0 differential test, each app's spec suite, and a shadow mode:
