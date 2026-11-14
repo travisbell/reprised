@@ -4,13 +4,26 @@ module Reprise
   # A route as defined: what it matches, its options (compiled into +conditions+ when the app is finalized), the
   # method its block compiled to, and its timeout in seconds, if any. +owner+ is the App or Controller that defined it.
   Route = Data.define(:verb, :path, :options, :conditions, :action, :timeout, :owner, :source_location) do
-    def to_s = "#{verb} #{path}"
+    def to_s = "#{verb} #{pattern}"
+
+    # The path as written: a pattern ("/movie/:id"), a regexp's source, or an Array's patterns joined with " | ".
+    # This is what telemetry reports as the route (http.route), so ids don't make every request its own series.
+    def pattern = Route.pattern_for(path)
+
+    def self.pattern_for(path)
+      case path
+      when Regexp then path.source
+      when Array then path.map { pattern_for(it) }.join(" | ")
+      else path.to_s
+      end
+    end
+
     def inspect = "#<Reprise::Route #{self} #{source_location&.join(":")}>"
   end
 
   # A before or after filter. +path+ is nil for one that applies to every request.
   Filter = Data.define(:type, :path, :options, :conditions, :action, :owner, :source_location) do
-    def to_s = "#{type} #{path || "*"}"
+    def to_s = "#{type} #{path ? Route.pattern_for(path) : "*"}"
   end
 
   # Where a controller was mounted among an app's routes and filters. Its definitions take this place when the app is

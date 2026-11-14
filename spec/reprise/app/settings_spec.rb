@@ -91,7 +91,7 @@ RSpec.describe "Settings and app definition" do
 
   it "wraps the app in middleware, outermost first" do
     tagger = Class.new do
-      def initialize(app, tag) = (@app, @tag = app, tag)
+      def initialize(app, tag, suffix: "") = (@app, @tag = app, "#{tag}#{suffix}")
 
       def call(env)
         status, headers, body = @app.call(env)
@@ -100,13 +100,43 @@ RSpec.describe "Settings and app definition" do
     end
     mock_app do
       use tagger, "outer"
-      use tagger, "inner"
+      use tagger, "inner", suffix: "!"
       get("/") { "" }
     end
 
     get "/"
 
-    expect(response_headers["x-trail"]).to eq("outer inner")
+    expect(response_headers["x-trail"]).to eq("outer inner!")
+  end
+
+  it "sets Sinatra's env keys too with sinatra_env, for middleware written for Sinatra" do
+    seen = {}
+    recorder = Class.new do
+      define_method(:initialize) { |app| @app = app }
+      define_method(:call) do |env|
+        @app.call(env).tap { seen.merge!(env.slice("sinatra.route", "sinatra.error")) }
+      end
+    end
+    mock_app do
+      set :sinatra_env, true
+      set :raise_errors, false
+      set :dump_errors, false
+      use recorder
+      get("/movie/:id") { raise ArgumentError, "boom" }
+    end
+
+    get "/movie/1"
+
+    expect(seen["sinatra.route"]).to eq("GET /movie/:id")
+    expect(seen["sinatra.error"]).to be_a(ArgumentError)
+  end
+
+  it "doesn't set Sinatra's env keys by default" do
+    mock_app { get("/") { env.key?("sinatra.route").to_s } }
+
+    get "/"
+
+    expect(body).to eq("false")
   end
 
   it "finalizes once, so the first request doesn't race to" do

@@ -4,8 +4,8 @@ A Rack 3 router with Sinatra's controller DSL, built for Ruby 4.0, Mustermann 4,
 Sinatra that controllers actually use, drops the rest, and is validated against TMDB's production Sinatra apps, so
 those apps can move over with mostly mechanical changes.
 
-**Status:** phases 0–4 are done: routing parity, the core app, controllers, rendering, and Async. Phase 5 (tooling) is
-next.
+**Status:** phases 0–5 are done: routing parity, the core app, controllers, rendering, Async, and tooling. Next is
+migrating TMDB's apps (phases 6–7).
 
 ### Decisions (2026-11-14)
 
@@ -174,8 +174,9 @@ end
   MultiRoute.
 - HEAD falls back to GET. An optional `trailing_slash: :optional` app setting will make the `/?` suffix unnecessary.
   It's off by default for compatibility.
-- `Route = Data.define(:verb, :pattern, :controller, :method_name, :conditions, :source_location)`. `App.routes`
-  exposes the table. It backs `reprise routes` and can feed Falcon's `warmup`.
+- `Reprise::Route` (a `Data`) has the verb, path, options, compiled conditions, action, timeout, owner, and source
+  location. `Route#pattern` is the path as written, which is what telemetry reports. `App.routes` and `App.filters`
+  are the finalized tables, mounted controllers included. They back `reprise routes` and can feed Falcon's `warmup`.
 - Named routes and `path_for(:movie, id:)` via `Mustermann::Pattern#expand`. This is a later phase and optional.
 
 ### Conditions
@@ -301,8 +302,9 @@ reprise-router/
     templates.rb                # Template (Erubi compiler), erb/partial/render/capture, lookup + cache
     async.rb                    # Reprise.current (Fiber[]), route timeouts, Reprise::Timeout
     streaming.rb                # Stream (Rack 3 streaming body), EventStream, stream/event_stream helpers
-    plugins/{action_view,phlex}.rb   # (opentelemetry: phase 5)
-    test.rb                     # Rack::Test helpers, route assertions
+    plugins/{action_view,phlex,open_telemetry}.rb
+    cli.rb                      # `reprise routes`
+  exe/reprise
   spec/                         # RSpec + Rack::Test; Falcon integration specs under spec/falcon
   .github/workflows/ci.yml      # lint, specs, Falcon specs under Async::Safe
   spike/                        # routing parity harness against real Sinatra apps
@@ -375,8 +377,18 @@ Deferred: `trailing_slash: :optional`, and `stream` (phase 4).
 - The whole suite passes with Async::Safe enabled, and a deliberate concurrent use of a `Dispatch` is caught.
 - CI workflow added.
 
-**5. Tooling.** `App.routes` and `reprise routes`, the OpenTelemetry plugin (span name, `http.route`, error skip
-  list), and optional `env` compatibility keys (`sinatra.route`/`sinatra.error`) for middleware that reads them.
+**5. Tooling. Done 2026-11-14.**
+- **`App.routes` and `App.filters`:** the finalized tables.
+- **`reprise routes [-r FILE] [--format table|compact] [--grep PATTERN] [APP]`** lists routes in the order they're
+  tried, with each one's controller, `provides`, and source. `compact` prints `file:line VERB pattern` per line, for
+  grep. It lists the larger app's 1,146 routes in 0.44 s.
+- **`plugin Reprise::Plugins::OpenTelemetry, skip_errors:, span_name:`** works with opentelemetry-instrumentation-rack's
+  span. It sets `http.route`, names the span `"GET /movie/:id"` (or whatever `span_name` returns), and records a 5xx's
+  exception and error status, except for `skip_errors` and their subclasses.
+- **`set :sinatra_env, true`** also sets `env["sinatra.route"]` and `env["sinatra.error"]`, for middleware written for
+  Sinatra.
+- `use` now forwards keyword arguments to middleware.
+- 170 specs.
 
 **6–7. Migrating TMDB's apps.** The smaller app goes first as the dry run. Both migrations use a codemod for
   controller declarations and mounting, the phase 0 differential test, each app's spec suite, and a shadow mode:

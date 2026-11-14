@@ -120,6 +120,7 @@ module Reprise
       @route = route
       scope.instance_variable_set(:@route, route)
       env["reprise.route"] = route
+      env["sinatra.route"] = route.to_s if settings.sinatra_env
     end
 
     # Makes the scope an instance of +owner+, the class that defined the route about to be tried: a controller, or for
@@ -201,6 +202,7 @@ module Reprise
 
     def handle_exception!(boom)
       env["reprise.error"] = boom
+      env["sinatra.error"] = boom if settings.sinatra_env
       http_status = boom.http_status if boom.is_a?(Error) && boom.respond_to?(:http_status)
       http_status = boom.code if boom.is_a?(Error) && http_status.nil? && settings.use_code? && boom.respond_to?(:code)
       scope.status(http_status&.between?(400, 599) ? http_status : 500)

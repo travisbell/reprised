@@ -48,7 +48,7 @@ module Reprise
 
           controller.mounted_in(self)
           mount = Mount.new(controller:)
-          [routes, filters[:before], filters[:after]].each { it << mount }
+          [:routes, :before, :after].each { definitions(it) << mount }
           (@controllers ||= []) << controller
         end
       end
@@ -81,11 +81,12 @@ module Reprise
           return self if @finalized
 
           share_helpers unless settings.helper_isolation
-          routes = compiled(:routes)
-          @router = build_router(routes) { |route| route.verb }
-          @filter_routers = { before: build_router(compiled(:before)), after: build_router(compiled(:after)) }.freeze
+          @routes = compiled(:routes).freeze
+          @filters = { before: compiled(:before).freeze, after: compiled(:after).freeze }.freeze
+          @router = build_router(@routes) { |route| route.verb }
+          @filter_routers = @filters.transform_values { build_router(it) }.freeze
           @error_handlers = errors.transform_values { it.reverse.freeze }.freeze
-          check_filter_overlap(routes)
+          check_filter_overlap(@routes)
           precompile_views! if settings.precompile_templates?
           @stack = build_stack
           @finalized = true
@@ -94,6 +95,13 @@ module Reprise
       end
 
       def finalized? = @finalized == true
+
+      # Every route, in the order they're tried: the app's own and its mounted controllers', with conditions compiled.
+      # Finalizes the app. Used by `reprise routes` and for warming up.
+      def routes = @routes || (finalize! && @routes)
+
+      # Every before and after filter, in order, mounted controllers' included. Finalizes the app.
+      def filters = @filters || (finalize! && @filters)
 
       attr_reader :stack
 
@@ -116,10 +124,10 @@ module Reprise
       # The app's routes or filters of +kind+, mounted controllers' in their place, with options compiled into
       # conditions.
       def compiled(kind)
-        definitions = @definitions.fetch(kind).flat_map do |definition|
+        definitions = definitions(kind).flat_map do |definition|
           next definition unless definition.is_a?(Mount)
 
-          kind == :routes ? definition.controller.routes : definition.controller.filters.fetch(kind)
+          definition.controller.definitions(kind)
         end
         definitions.map do |definition|
           options = definition.owner.compile_conditions(definition.options, self)
@@ -178,7 +186,7 @@ module Reprise
       def build_stack
         app = ->(env) { Dispatch.new(self, env).call }
         app = Rack::Head.new(app)
-        middleware.reverse_each { |klass, args, block| app = klass.new(app, *args, &block) }
+        middleware.reverse_each { |klass, args, options, block| app = klass.new(app, *args, **options, &block) }
         app
       end
     end
@@ -204,5 +212,7 @@ module Reprise
     set :erb, {}
     set :reload_templates, proc { development? }
     set :precompile_templates, proc { !development? && !test? }
+    # Also set env["sinatra.route"] ("GET /movie/:id") and env["sinatra.error"], for middleware written for Sinatra.
+    set :sinatra_env, false
   end
 end

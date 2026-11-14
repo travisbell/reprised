@@ -22,7 +22,9 @@ Gem::Specification.new do |spec|
   spec.metadata["source_code_uri"] = spec.homepage
   spec.metadata["rubygems_mfa_required"] = "true"
 
-  spec.files = Dir["lib/**/*.rb", "README.md", "LICENSE.txt"]
+  spec.files = Dir["lib/**/*.rb", "exe/*", "README.md", "LICENSE.txt"]
+  spec.bindir = "exe"
+  spec.executables = ["reprise"]
   spec.require_paths = ["lib"]
 
   spec.add_dependency("erubi", "~> 1.13")

@@ -10,7 +10,9 @@ A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed 
 - Async features: `Reprise.current` for the request from any fiber, per-route timeouts, streaming, Server-Sent
   Events, and WebSocket routes, all tested under Falcon
 
-Tooling (route listing, OpenTelemetry) comes next. See [PLAN.md](PLAN.md).
+- Tooling: `reprise routes`, an OpenTelemetry plugin, and Sinatra-compatible env keys for existing middleware
+
+See [PLAN.md](PLAN.md).
 
 ```ruby
 require "reprise"
@@ -31,6 +33,14 @@ class App < Reprise::App
 end
 
 run App # config.ru
+```
+
+## Listing routes
+
+```sh
+bundle exec reprise routes                     # the app in ./app.rb
+bundle exec reprise routes -r ./boot.rb MyApp  # require files first, and name the app
+bundle exec reprise routes -f compact -g movie # "file:line VERB pattern" lines, filtered
 ```
 
 ## Development

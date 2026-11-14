@@ -42,7 +42,12 @@ module Reprise
       verbs.each { |verb| Array(paths).each { |path| add_route(verb.to_s.upcase, path, options, block) } }
     end
 
-    def routes = @definitions[:routes]
+    # The routes defined here, in order. (An app's `routes` is its whole table, mounted controllers' included.)
+    def routes = definitions(:routes)
+
+    # The routes, before filters, or after filters (+kind+ :routes, :before, :after) defined here, in order, with
+    # Mount markers where controllers were mounted.
+    def definitions(kind) = @definitions.fetch(kind)
 
     # A WebSocket endpoint: the block runs with the connection once the request is upgraded, in the request's scope.
     # Other requests for the path move on to the next route. Options go to async-websocket's Rack adapter (handler:,
@@ -76,7 +81,8 @@ module Reprise
 
     def before(path = nil, **options, &block) = add_filter(:before, path, options, block)
     def after(path = nil, **options, &block) = add_filter(:after, path, options, block)
-    def filters = @definitions.slice(:before, :after)
+    # The filters defined here, by type. (An app's `filters` include its mounted controllers'.)
+    def filters = { before: definitions(:before), after: definitions(:after) }
 
     # -- Errors ---------------------------------------------------------------------------------------------------
 
@@ -213,9 +219,9 @@ module Reprise
     def finalized? = false
 
     # Wraps the app in Rack middleware, outermost first.
-    def use(middleware, *args, &block)
+    def use(middleware, *args, **options, &block)
       ensure_definable!
-      @middleware << [middleware, args, block]
+      @middleware << [middleware, args, options, block]
     end
 
     def middleware = @middleware
@@ -263,7 +269,7 @@ module Reprise
         verb:, path:, options: options.freeze, conditions: take_pending_conditions,
         action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location: block.source_location
       )
-      routes << route
+      definitions(:routes) << route
       route
     end
 
