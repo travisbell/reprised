@@ -26,7 +26,11 @@ module OpenTelemetrySupport
     OpenTelemetry.meter_provider = provider
   end
 
-  def stop_metrics = OpenTelemetry.meter_provider = OpenTelemetry::Metrics::MeterProvider.new
+  # The API's no-op provider, with no metric readers: the SDK's fork hook (0.22) reads the global provider's readers in
+  # every forked child, and raises if it has no such method, so the child dies.
+  def stop_metrics
+    OpenTelemetry.meter_provider = OpenTelemetry::Metrics::MeterProvider.new.tap { it.define_singleton_method(:metric_readers) { [] } }
+  end
 
   # The data points recorded for the metric +name+.
   def data_points(name)

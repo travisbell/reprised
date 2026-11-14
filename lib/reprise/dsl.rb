@@ -16,6 +16,9 @@ module Reprise
       :sessions, :show_exceptions, :static, :static_cache_control, :static_headers, :strict_paths, :threaded, :traps
     ].freeze
 
+    # The blocks compiled methods were defined from, by method (held only as long as the method is).
+    def self.compiled_blocks = @compiled_blocks ||= ObjectSpace::WeakKeyMap.new
+
     def self.extended(base)
       base.instance_variable_set(:@definitions, { routes: [], before: [], after: [] })
       base.instance_variable_set(:@errors, {})
@@ -182,6 +185,10 @@ module Reprise
       return Negotiation.mime_type(type) unless value
 
       type = ".#{type}" unless type.to_s.start_with?(".")
+      if Rack::Mime::MIME_TYPES.frozen?
+        raise FrozenError, "Rack's media types are frozen (by App.ractorize! or rack/ractorize); register #{type} before"
+      end
+
       Rack::Mime::MIME_TYPES[type] = value
     end
 
@@ -290,11 +297,14 @@ module Reprise
     # Compiles a block into an UnboundMethod, so it runs as a real method of the request scope, which is faster than
     # instance_exec. (Backtraces still show the block's own label, as in Sinatra.) An app compiles into its helpers
     # module, so its routes, filters, and handlers can also run in its controllers' scopes.
+    #
+    # The block is remembered, so App.ractorize! can compile the method again from a shareable copy of it.
     def compile_method(name, block)
       target = compile_target
       target.define_method(name, &block)
       method = target.instance_method(name)
       target.remove_method(name)
+      DSL.compiled_blocks[method] = block
       method
     end
 

@@ -323,6 +323,7 @@ reprise-router/
     templates.rb                # Template (Erubi compiler), erb/partial/render/capture, lookup + cache
     async.rb                    # Reprise.current (Fiber[]), route timeouts, Reprise::Timeout
     reloader.rb                 # opt-in: reload the app's code in development (Zeitwerk, or required files)
+    ractors.rb                  # App.ractorize!: make an app shareable with other Ractors
     streaming.rb                # Stream (Rack 3 streaming body), EventStream, stream/event_stream helpers
     plugins/{action_view,phlex,sprockets,open_telemetry,telemetry}.rb
     telemetry.rb  telemetry/      # opt-in: request metrics and logs, stall detector, reactor lag
@@ -500,6 +501,38 @@ generic parts of the telemetry TMDB's apps share today, reading Reprise's own en
   edited, and removed route files, edits to app and lib files, a syntax error and its fix all reload. A reload takes
   about 115 ms, including `finalize!`. The change check costs about 0.1 ms per request, with 43 files and 25
   directories watched.
+
+**Ractors. Started 2026-11-14.** `App.ractorize!` (opt-in; the file loads only when it's called) makes an app
+shareable, so a Ractor server can hand one app to every worker Ractor: the contract
+[Kino](https://github.com/yaroslav/kino) and Rails' `ractorize!` share. Nothing changes for an app that doesn't call it.
+- **What it does:** compiles every route, filter, error handler, and condition block again from a
+  `Ractor.shareable_proc` copy (`compile_method` remembers each block for this); freezes each setting's current value
+  and redefines its reader; moves the caches Reprise fills while serving (content types, error handler lookups,
+  Negotiation's Accept caches, the template lookup) to Ractor-local storage, seeded from what boot built; builds the
+  state Mustermann patterns build lazily (`param_converters`) and drops their AST caches (a WeakMap); unescapes
+  captures without Mustermann's `@@uri` class variable; freezes Rack's and Mustermann's constants and Rack's
+  class-level settings (`rack/ractorize` when the installed Rack has it, and a shareable copy of Rack 3.2's default
+  `ip_filter`, which captures an unfrozen Regexp); and makes the routers, stack, and definitions shareable.
+- **What it reports:** one `RactorError` listing each block that captures an unshareable or reassigned variable (with
+  its file and line, and Ruby's message naming the variable), and the path to whatever in the app's state can't be
+  frozen (`App.@stack → @lock holds Thread::Mutex`). A setting that can't be shared is a warning: only the main
+  Ractor can read it.
+- **Templates:** a frozen template (or one a worker compiled) compiles the method for a new set of locals per Ractor;
+  `module_eval` works in worker Ractors.
+- **Measured** (an M-series machine, YJIT, a small app): ractorizing costs about 3% in the main Ractor (the
+  Ractor-local cache lookups). Across Ractors it serves 1.7× at 2 and 2.4× at 4, flattening by 8; at 8, GC (which
+  still stops every Ractor) takes 30–40% of the time. Forked workers scale further for throughput; Ractors' win today
+  is memory.
+- **Specs** run each example in a forked child, since ractorizing freezes Rack's globals for the process.
+- **Still to do, over time:**
+  - offer Mustermann the fixes upstream (a frozen URI parser constant, `ALWAYS_ARRAY` frozen, no lazy AST cache), or
+    have the router extract every Sinatra pattern's params itself, checked by the differential;
+  - use Rack's released `rack/ractorize` once it ships (expected in 3.3), and drop the Rack 3.2 shim;
+  - telemetry (its metrics hold Mutexes in constants; OpenTelemetry's SDK and Console aren't Ractor-safe);
+  - streaming, timeouts, and `Reprise.current` inside a worker Ractor (Async in a Ractor is untested); WebSocket routes;
+  - the ActionView and Phlex plugins;
+  - a spec mode that runs the whole app suite through a worker Ractor;
+  - the TMDB apps themselves: Mongoid, Redis clients, Console, OpenTelemetry, and tmdb-shared's own state.
 
 **6–7. Migrating TMDB's apps.** The smaller app goes first as the dry run. Both migrations use a codemod for
   controller declarations and mounting, the phase 0 differential test, each app's spec suite, and a shadow mode:

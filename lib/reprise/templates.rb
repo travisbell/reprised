@@ -53,7 +53,14 @@ module Reprise
     def method_for(locals)
       size = locals.size
       @methods.each { |names, method| return method if names.size == size && names.all? { locals.key?(it) } }
-      compile(locals.keys)
+      frozen? || !Ractor.main? ? compile_in_ractor(locals.keys) : compile(locals.keys)
+    end
+
+    # A frozen template (shared with other Ractors by App.ractorize!), or one a Ractor other than the main one
+    # compiled, keeps the methods it compiles later in a Ractor-local cache.
+    def compile_in_ractor(keys)
+      compiled = (Ractor.current[:reprise_template_methods] ||= {}.compare_by_identity)[self] ||= {}
+      compiled[keys] ||= define_template_method(keys, :"__reprise_template_#{object_id}_#{Ractor.current.object_id}_#{compiled.size}")
     end
 
     # Defines the method for this set of local names. The previous buffer is restored afterwards, since every template
@@ -62,23 +69,27 @@ module Reprise
       COMPILE_LOCK.synchronize do
         return @methods[keys] if @methods[keys]
 
-        assignments = keys.map do |key|
-          raise ArgumentError, "#{key.inspect} isn't a valid local variable name (in #{path})" unless LOCAL_NAME.match?(key.to_s)
-
-          "#{key} = __locals[#{key.inspect}];"
-        end.join
-        name = :"__reprise_template_#{object_id}_#{@methods.size}"
-        buffer = @bufvar.start_with?("@") ? @bufvar : nil
-        source = +"def #{name}(__locals);#{assignments}"
-        source << "__previous_buffer = #{buffer};" if buffer
-        source << "begin;" << @ruby << "\nensure;#{"#{buffer} = __previous_buffer;" if buffer}end;end"
-        # On the template's first line, so template line numbers stay right in backtraces.
-        Methods.module_eval(source, path, line)
-        method = Methods.instance_method(name)
-        Methods.remove_method(name)
+        method = define_template_method(keys, :"__reprise_template_#{object_id}_#{@methods.size}")
         @methods = @methods.merge(keys.dup.freeze => method).freeze
         method
       end
+    end
+
+    def define_template_method(keys, name)
+      assignments = keys.map do |key|
+        raise ArgumentError, "#{key.inspect} isn't a valid local variable name (in #{path})" unless LOCAL_NAME.match?(key.to_s)
+
+        "#{key} = __locals[#{key.inspect}];"
+      end.join
+      buffer = @bufvar.start_with?("@") ? @bufvar : nil
+      source = +"def #{name}(__locals);#{assignments}"
+      source << "__previous_buffer = #{buffer};" if buffer
+      source << "begin;" << @ruby << "\nensure;#{"#{buffer} = __previous_buffer;" if buffer}end;end"
+      # On the template's first line, so template line numbers stay right in backtraces.
+      Methods.module_eval(source, path, line)
+      method = Methods.instance_method(name)
+      Methods.remove_method(name)
+      method
     end
   end
 
@@ -234,15 +245,14 @@ module Reprise
         return cached if cached && !(settings.reload_templates? && stale?(cached))
 
         compiled = compile_template(data, engine_options, views, eat_errors:)
-        @template_cache = template_cache.merge(key => compiled).freeze
-        compiled
+        cache_template(key, compiled)
       end
 
       # The compiled template for +data+ with the app's own Erubi options: cached by views directory and name, so
       # looking it up allocates nothing. A missing file is remembered too (unless reload_templates is on), since a
       # route's render looks for views/layout.erb every time and most apps have none.
       def default_template(data, views, eat_errors: false)
-        by_views = (@default_templates ||= {})[views] ||= {}
+        by_views = default_templates_for(views)
         cached = by_views[data]
         if cached && !(settings.reload_templates? && (cached.equal?(MISSING) || stale?(cached)))
           throw(:layout_missing) if cached.equal?(MISSING) && eat_errors
@@ -266,6 +276,14 @@ module Reprise
       private
 
       def template_cache = @template_cache ||= {}.freeze
+
+      # Where templates are cached: the app's own caches, or (once ractorized) a Ractor's, seeded from the frozen ones.
+      def default_templates_for(views) = (@default_templates ||= {})[views] ||= {}
+
+      def cache_template(key, compiled)
+        @template_cache = template_cache.merge(key => compiled).freeze
+        compiled
+      end
 
       def compile_template(data, engine_options, views, eat_errors:)
         case data

@@ -13,6 +13,7 @@ A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed 
 - Tooling: `reprise routes`, an OpenTelemetry plugin, and Sinatra-compatible env keys for existing middleware
 - Opt-in telemetry: request metrics and an access log, an event-loop stall detector, and reactor lag
 - Code reloading in development, with Zeitwerk
+- Running in several Ractors (experimental): `App.ractorize!`
 
 See [PLAN.md](PLAN.md).
 
@@ -96,6 +97,28 @@ end
 
 The loader needs `enable_reloading` before its `setup`. A reload that raises (a syntax error, say) answers with the
 error, and is tried again with the next request. config.ru and its middleware aren't reloaded.
+
+## Ractors
+
+`App.ractorize!` makes an app shareable with other Ractors, so a Ractor server (such as
+[Kino](https://github.com/yaroslav/kino)) can run it in several at once: the app is built once, at boot, and handed to
+each worker Ractor. Ractors are experimental in Ruby 4.0, and so is this.
+
+```ruby
+App.ractorize! # at boot, once every app is defined
+```
+
+It compiles the app's blocks again from shareable copies, freezes its settings, keeps the caches Reprise fills while it
+serves requests per Ractor, and freezes Rack's and Mustermann's globals (with Rack's own `rack/ractorize` where the
+installed Rack has it). Whatever can't be shared is listed in one `Reprise::RactorError`: a block and the variable it
+uses, or the path to the object that can't be frozen.
+
+- Route, filter, and error handler blocks may use the local variables around them only if their values are frozen, and
+  may not assign to them. Helpers defined with `def` are fine; methods an app defines from blocks aren't.
+- Middleware is frozen, so middleware that changes its own state as it serves requests can't be shared.
+- Templates should be precompiled (`precompile_templates`, the default outside development and test).
+- Rack's media types and other globals are frozen for the whole process, so register media types before.
+- The Reloader, telemetry, and the Sprockets plugin don't run in other Ractors yet.
 
 ## Development
 

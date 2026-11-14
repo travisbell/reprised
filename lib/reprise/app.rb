@@ -3,6 +3,9 @@
 require "rack/head"
 
 module Reprise
+  # Raised by App.ractorize! with everything that keeps the app from being shared with other Ractors.
+  class RactorError < StandardError; end
+
   # A Rack application. Subclass it, define routes or mount controllers, and `run` the class:
   #
   #   class App < Reprise::App
@@ -110,6 +113,16 @@ module Reprise
       end
 
       def finalized? = @finalized == true
+
+      # Makes the app shareable with other Ractors, so a server can run it in several (see Reprise::Ractors). Call it
+      # once at boot, after every app is defined: it finalizes the app and freezes Rack's globals too. Raises
+      # Reprise::RactorError with everything that can't be shared.
+      def ractorize!
+        require_relative "ractors"
+        Ractors.ractorize!(self)
+      end
+
+      def ractorized? = @ractorized == true
 
       # The content-type header for +type+ (with no parameters), from the block the first time. Bounded, since the
       # type can come from a request.
@@ -249,9 +262,10 @@ module Reprise
         nil
       end
 
-      def build_stack
+      def build_stack(shareable: false)
         # (HEAD bodies are dropped by Dispatch itself, rather than by Rack::Head.)
-        app = ->(env) { Dispatch.new(self, env).call }
+        owner = self
+        app = shareable ? Ractor.shareable_lambda { |env| Dispatch.new(owner, env).call } : ->(env) { Dispatch.new(self, env).call }
         middleware.reverse_each { |klass, args, options, block| app = klass.new(app, *args, **options, &block) }
         app
       end
