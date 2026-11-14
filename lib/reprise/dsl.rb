@@ -3,8 +3,9 @@
 require "rack/mime"
 
 module Reprise
-  # The class-level DSL: routes, filters, error handlers, conditions, settings, helpers, and middleware. Definitions
-  # are recorded in order and compiled into routers when the app is finalized.
+  # The class-level DSL, shared by apps and controllers: routes, filters, error handlers, conditions, settings, helpers,
+  # and middleware. Definitions are recorded in order. When the app is finalized, their options compile into
+  # conditions, in the app's context, and they compile into routers.
   module DSL
     VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "LINK", "UNLINK"].freeze
 
@@ -68,7 +69,8 @@ module Reprise
     # -- Conditions -----------------------------------------------------------------------------------------------
 
     # With a name, defines a route option: `condition(:admin) { |level| current_user.level >= level }` makes
-    # `get "/x", admin: 2` match only when the block doesn't return false. The block runs in the request's scope.
+    # `get "/x", admin: 2` match only when the block doesn't return false. The block runs in the request's scope. An
+    # app's conditions can be used by its controllers' routes.
     #
     # Without a name, adds the block as a condition of the next route defined, as Sinatra's `condition` does. This
     # is how Sinatra-style condition methods work: a class method calling `condition { ... }`, used as a route option.
@@ -139,16 +141,29 @@ module Reprise
 
     # -- Helpers, extensions, middleware --------------------------------------------------------------------------
 
-    # Adds methods to routes, filters, and templates: the block's methods, and the given modules'.
+    # Adds methods to routes, filters, and templates: the block's methods, and the given modules'. An app's helpers
+    # are global: its controllers have them too. A controller's are its own (unless the app turns off
+    # helper_isolation).
     def helpers(*modules, &block)
-      class_eval(&block) if block
-      include(*modules) if modules.any?
+      helpers_module.module_eval(&block) if block
+      helpers_module.include(*modules) if modules.any?
     end
 
-    # Registers a Sinatra-style extension: a module extending the app, with an optional `registered(app)` hook.
+    # The module holding this class's helpers, included in it.
+    def helpers_module
+      @helpers_module ||= Module.new.tap do |mod|
+        owner = self
+        mod.define_singleton_method(:inspect) { "#{owner}::Helpers" }
+        include(mod)
+      end
+    end
+
+    # Registers a Sinatra-style extension: a module extending the app, with an optional `registered(app)` hook. A
+    # Controller class is mounted instead, so `register MovieController` keeps working.
     def register(*extensions, &block)
       extensions << Module.new(&block) if block
       extensions.each do |extension|
+        next mount(extension) if extension.is_a?(Class) && extension < Controller
         @extensions << extension
         extend(extension)
         extension.registered(self) if extension.respond_to?(:registered)
@@ -168,6 +183,37 @@ module Reprise
 
     def middleware = @middleware
 
+    # -- Finalizing -----------------------------------------------------------------------------------------------
+
+    # Compiles a route's or filter's options into conditions, looking for named conditions in this class and then in
+    # +app+, so a controller's routes can use the app's. Called when the app is finalized.
+    def compile_conditions(options, app)
+      options.filter_map do |name, args|
+        args = Array(args)
+        if name == :provides
+          Condition.new(name:, check: Controller.instance_method(:provides?), args: [args.flat_map { Negotiation.mime_types(it) }.freeze].freeze)
+        elsif (method = find_condition(name) || app.find_condition(name))
+          Condition.new(name:, check: method, args: args.freeze)
+        elsif (definer = [self, app].find { it.respond_to?(name) })
+          # A Sinatra-style condition method, which adds a condition with `condition { ... }`.
+          definer.__send__(name, *args)
+          definer.take_pending_conditions
+        else
+          raise ArgumentError, "unknown route option #{name.inspect} (#{self})"
+        end
+      end.flatten.freeze
+    end
+
+    def take_pending_conditions = @pending_conditions.slice!(0..).freeze
+
+    def find_condition(name)
+      ancestors.each do |ancestor|
+        conditions = ancestor.instance_variable_get(:@conditions) if ancestor.is_a?(Class)
+        return conditions[name] if conditions&.key?(name)
+      end
+      nil
+    end
+
     private
 
     def add_route(verb, path, options, block)
@@ -175,8 +221,8 @@ module Reprise
       raise ArgumentError, "#{verb} #{path} needs a block" unless block
 
       route = Route.new(
-        verb:, path:, conditions: compile_conditions(options), action: compile_method("#{verb} #{path}", block),
-        owner: self, source_location: block.source_location
+        verb:, path:, options: options.dup.freeze, conditions: take_pending_conditions,
+        action: compile_method("#{verb} #{path}", block), owner: self, source_location: block.source_location
       )
       routes << route
       route
@@ -187,45 +233,23 @@ module Reprise
       raise ArgumentError, "#{type} filter needs a block" unless block
 
       @definitions[type] << Filter.new(
-        type:, path:, conditions: compile_conditions(options), action: compile_method("#{type.upcase} #{path || "*"}", block),
-        owner: self, source_location: block.source_location
+        type:, path:, options: options.dup.freeze, conditions: take_pending_conditions,
+        action: compile_method("#{type.upcase} #{path || "*"}", block), owner: self, source_location: block.source_location
       )
     end
 
-    def compile_conditions(options)
-      conditions = options.map do |name, args|
-        args = Array(args)
-        if name == :provides
-          Condition.new(name:, check: Controller.instance_method(:provides?), args: [args.flat_map { Negotiation.mime_types(it) }.freeze].freeze)
-        elsif (method = find_condition(name))
-          Condition.new(name:, check: method, args: args.freeze)
-        elsif respond_to?(name)
-          # A Sinatra-style condition method, which adds a condition with `condition { ... }`.
-          __send__(name, *args)
-          nil
-        else
-          raise ArgumentError, "unknown route option #{name.inspect}"
-        end
-      end
-      conditions.compact.concat(@pending_conditions.slice!(0..)).freeze
-    end
-
-    def find_condition(name)
-      ancestors.each do |ancestor|
-        conditions = ancestor.instance_variable_get(:@conditions) if ancestor.is_a?(Class)
-        return conditions[name] if conditions&.key?(name)
-      end
-      nil
-    end
-
     # Compiles a block into an UnboundMethod, so it runs as a real method of the request scope, which is faster than
-    # instance_exec. (Backtraces still show the block's own label, as in Sinatra.)
+    # instance_exec. (Backtraces still show the block's own label, as in Sinatra.) An app compiles into its helpers
+    # module, so its routes, filters, and handlers can also run in its controllers' scopes.
     def compile_method(name, block)
-      define_method(name, &block)
-      method = instance_method(name)
-      remove_method(name)
+      target = compile_target
+      target.define_method(name, &block)
+      method = target.instance_method(name)
+      target.remove_method(name)
       method
     end
+
+    def compile_target = self
 
     def ensure_definable!
       raise FrozenError, "#{self} is finalized; define routes, filters, and handlers before the first request" if finalized?

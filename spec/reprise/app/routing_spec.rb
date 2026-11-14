@@ -124,11 +124,11 @@ RSpec.describe "Routing" do
   end
 
   it "matches any of an Array of paths" do
-    mock_app { get(["/award", "/awards/*"]) { "awards" } }
+    mock_app { get(["/team", "/teams/*"]) { "teams" } }
 
-    get "/awards/2024"
+    get "/teams/2024"
 
-    expect(body).to eq("awards")
+    expect(body).to eq("teams")
   end
 
   it "defines one route for several verbs and paths with `route`" do
@@ -148,8 +148,10 @@ RSpec.describe "Routing" do
     expect(body).to eq("GET /movie/:id true")
   end
 
-  it "rejects unknown route options" do
-    expect { mock_app { get("/", nope: 1) { "" } } }.to raise_error(ArgumentError, /unknown route option :nope/)
+  it "rejects unknown route options when finalized, once the app's conditions are known" do
+    mock_app { get("/", nope: 1) { "" } }
+
+    expect { app.finalize! }.to raise_error(ArgumentError, /unknown route option :nope/)
   end
 
   it "closes definitions once finalized" do

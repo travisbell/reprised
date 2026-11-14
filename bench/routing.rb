@@ -15,7 +15,8 @@ require_relative "../spike/sample"
 app = ARGV.fetch(0)
 sample = Spike::Sample.load(app)
 tables = Reprise::Router::MATCHERS.to_h { [it, Spike::Table.load(app, matcher: it)] }
-rack_app = Spike::AppTable.load(app).app
+rack_apps = { "reprise app (full Rack call)" => Spike::AppTable.load(app).app }
+rack_apps["reprise app, controllers mounted"] = Spike::AppTable.load(app, controllers: true).app if app == "tmdb-web"
 
 sample.each do |kind, requests|
   parsed = requests.map { it.merge("accept" => Reprise::Negotiation.parse_accept(it["accept"])) }
@@ -30,6 +31,8 @@ sample.each do |kind, requests|
     env["HTTP_ACCEPT"] = request["accept"] if request["accept"]
     env.freeze
   end
-  us = Spike::Sample.measure(envs) { rack_app.call(it.dup) }
-  puts format("%-10s %-11s %-34s %8.1f µs/request  (%d requests)", app, kind, "reprise app (full Rack call)", us, requests.size)
+  rack_apps.each do |name, rack_app|
+    us = Spike::Sample.measure(envs) { rack_app.call(it.dup) }
+    puts format("%-10s %-11s %-34s %8.1f µs/request  (%d requests)", app, kind, name, us, requests.size)
+  end
 end

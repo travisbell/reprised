@@ -4,7 +4,7 @@ A Rack 3 router with Sinatra's controller DSL, built for Ruby 4.0, Mustermann 4,
 Sinatra that controllers actually use, drops the rest, and is validated against TMDB's production Sinatra apps, so
 those apps can move over with mostly mechanical changes.
 
-**Status:** phases 0 (routing parity) and 1 (core app) are done. Phase 2 (controllers) is next.
+**Status:** phases 0 (routing parity), 1 (core app), and 2 (controllers) are done. Phase 3 (rendering) is next.
 
 ### Decisions (2026-11-14)
 
@@ -108,18 +108,29 @@ end
 
 - `Reprise::App < Reprise::Controller`. The App is itself a controller that owns its own routes, filters, and methods.
   So an app that reopens one class across many files keeps that shape (`class API < Reprise::App`), and its class-body
-  `def`s are global helpers.
-- `Reprise::Controller` is the per-request scope class. A request instantiates **one** object: an instance of the
-  matched route's controller. Helpers are ordinary methods, so `private`, `super`, and `Module#prepend` all work as
-  they normally do.
-- `mount` includes the App's global helper module into the controller. Controller methods sit above it in the
-  ancestor chain, so a controller can override a global helper.
-- Templates render inside that scope instance. A view rendered by `MovieController` sees movie helpers plus the global
+  `def`s work in its own routes.
+- `Reprise::Controller` is the per-request scope class. A request's scope is an instance of the matched route's
+  controller (`Reprise::Dispatch` runs the request). Helpers are ordinary methods, so `private`, `super`, and
+  `Module#prepend` all work as they normally do.
+- **Global helpers live in the app's helpers module** (`App.helpers_module`). `helpers do ... end` and
+  `helpers SomeModule` on the app add to it, and `mount` includes it in the controller. Controller methods sit above
+  it in the ancestor chain, so a controller can override a global helper.
+- The app also compiles its own routes, filters, error handlers, and conditions into that module. That's what lets
+  them run in a controller's scope: Ruby only binds a method to instances of the class or module that defines it.
+  Methods `def`ined in the app's class body aren't in the module, so they're visible to the app's own routes only.
+- Templates render inside the scope instance. A view rendered by `MovieController` sees movie helpers plus the global
   ones, and no other controller's helpers. A shared layout that calls one controller's helper fails loudly
   (`NoMethodError`), which is the point.
-- Requests that match no route get a bare `App` scope with the global helpers only.
-- A migration switch, `helper_isolation: false`, makes every controller's helpers visible everywhere (Sinatra's
-  behavior), so an app can migrate first and fix cross-controller helper use afterwards.
+- Requests that match no route get an app scope, with the global helpers only.
+- When a candidate route belongs to another controller (after a failed condition, or a `pass`), the scope becomes an
+  instance of that controller and takes over the previous scope's instance variables.
+- A migration switch, `set :helper_isolation, false`, makes every controller's `helpers` blocks global (Sinatra's
+  behavior), so an app can migrate first and fix cross-controller helper use afterwards. A controller's plain `def`s
+  stay private either way.
+- Controllers read the app's settings (`settings`). They can't `set` settings or `use` middleware, and a controller
+  mounts in one app only.
+- A controller's route options compile into conditions when the app is finalized, in the app's context. So its routes
+  can use the app's named and Sinatra-style conditions, and an unknown option raises at `finalize!`.
 
 ### Filters
 
@@ -129,11 +140,15 @@ end
   and its pattern matches. Definition order across App and controller filters is preserved exactly. `route` (the
   matched `Reprise::Route`) is available inside `before` filters.
 - When no route matches, only App filters run. A controller filter no longer runs on a 404 path that happens to match
-  its pattern (`before "/award/*"` on `/award/nope`). Global filters still run, so error pages get whatever the app's
+  its pattern (`before "/teams/*"` on `/teams/nope`). Global filters still run, so error pages get whatever the app's
   filters set up.
 - **Scoping can silently drop a filter from a route**, when a controller filter's pattern also matches a route that
-  belongs to another controller. `finalize!` warns about every such overlap, so moving to scoped filters never
-  silently removes one from a route.
+  belongs to another controller. `finalize!` reports every such overlap, by matching each route's pattern (expanded
+  with sample values) against the other controllers' filters. `set :filter_overlap` picks what happens: `:warn` (the
+  default), `:raise`, or `:ignore`. Moving to scoped filters therefore never silently removes one from a route.
+- Error handlers: the matched controller's first, then the app's, for each key (an exception class, then its
+  superclasses, then the status). They run in the request's scope, so they see the route's instance variables and
+  helpers.
 - `after` filters always run, including after `halt`, as in Sinatra.
 - A filter's params, including a regexp filter's `params["captures"]`, are scoped to that filter. Sinatra leaks
   captures into the route that runs after it.
@@ -309,8 +324,18 @@ app, and 81 µs → 23 µs on the smaller one.
 
 Deferred: `trailing_slash: :optional`, and `stream` (phase 4).
 
-**2. Controllers.** `Reprise::Controller`, `mount`, private helpers, filter ownership and the `finalize!` overlap
-  warning, the `helper_isolation` switch, cross-controller `pass`.
+**2. Controllers. Done 2026-11-14.**
+- `Reprise::Controller`, `mount` (and `register` for controller classes), and global and private helpers.
+- `helper_isolation`, filters scoped to their controller, the `filter_overlap` check, and controller-first error
+  handlers.
+- Conditions compiled in the app's context, and scope hand-off across controllers. The request flow moved into
+  `Reprise::Dispatch`.
+- 122 specs.
+- **Real-structure check:** a third differential level rebuilds the larger app the way it's actually organized, with
+  56 mounted controllers. On all 132,570 requests, every filter difference from Sinatra is one scoping predicts: 19,470
+  404s where controller filters no longer run, and 20 requests on one route where another controller's filter matched.
+  That one is the same overlap the earlier manual audit found, and the boot-time check reports it.
+- Mounting controllers costs about 2 µs per request.
 
 **3. Rendering.** Erubi templates, `partial`, the ActionView plugin, the Phlex plugin.
 

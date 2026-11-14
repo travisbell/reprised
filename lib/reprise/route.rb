@@ -1,16 +1,21 @@
 # frozen_string_literal: true
 
 module Reprise
-  # A route as defined: what it matches, the conditions it needs, and the method its block compiled to.
-  Route = Data.define(:verb, :path, :conditions, :action, :owner, :source_location) do
+  # A route as defined: what it matches, its options (compiled into +conditions+ when the app is finalized), and the
+  # method its block compiled to. +owner+ is the App or Controller that defined it.
+  Route = Data.define(:verb, :path, :options, :conditions, :action, :owner, :source_location) do
     def to_s = "#{verb} #{path}"
     def inspect = "#<Reprise::Route #{self} #{source_location&.join(":")}>"
   end
 
   # A before or after filter. +path+ is nil for one that applies to every request.
-  Filter = Data.define(:type, :path, :conditions, :action, :owner, :source_location) do
+  Filter = Data.define(:type, :path, :options, :conditions, :action, :owner, :source_location) do
     def to_s = "#{type} #{path || "*"}"
   end
+
+  # Where a controller was mounted among an app's routes and filters. Its definitions take this place when the app is
+  # finalized, as a Sinatra extension's do when it's registered.
+  Mount = Data.define(:controller)
 
   # An error handler, for an exception class or a status code.
   ErrorHandler = Data.define(:key, :action, :owner, :source_location)

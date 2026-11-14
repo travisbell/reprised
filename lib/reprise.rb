@@ -12,6 +12,7 @@ require_relative "reprise/cookies"
 require_relative "reprise/helpers"
 require_relative "reprise/dsl"
 require_relative "reprise/controller"
+require_relative "reprise/dispatch"
 require_relative "reprise/app"
 
 # A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed for Falcon and Async.

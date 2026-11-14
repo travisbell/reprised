@@ -13,7 +13,7 @@ bundle exec rake spike:bench    # Sinatra vs Reprise routing cost
 |---|---|---|---|
 | Extract | `extract_routes.rb` | the app's own (it boots the app) | `fixtures/<app>.routes.json`: every route and filter, in Sinatra's order, with options and source |
 | Oracle | `oracle/sinatra_oracle.rb` | `oracle/Gemfile` (Sinatra 4.2.1, Mustermann 3.1.1) | `results/<app>.oracle.jsonl`: Sinatra's decision for each generated request |
-| Diff | `differential.rb` (with `table.rb`, `app_table.rb`) | this gem's (Mustermann 4) | differences, grouped; exits 1 if any. Runs at two levels: the router directly, and a `Reprise::App` built from the table, called through Rack |
+| Diff | `differential.rb` (with `table.rb`, `app_table.rb`) | this gem's (Mustermann 4) | differences, grouped; exits 1 if any. Runs at three levels: `router` (the router directly), `app` (a `Reprise::App` built from the table, called through Rack), and `controllers` (the same, with each controller file's definitions in its own mounted `Reprise::Controller`) |
 | Bench | `oracle/bench_sinatra.rb`, `../bench/routing.rb` | both | µs per request |
 
 The oracle runs in its own bundle because Sinatra 4.2 requires Mustermann ~> 3.0.
@@ -38,6 +38,11 @@ status, route, params, content type, and the filters run all match. The one know
   `params["captures"]`, so a regexp filter's captures leak into the route after it (2,460 tmdb-web requests, from one
   regexp filter). Reprise scopes them to the filter. Neither app reads captures outside the filter or route that set
   them.
+
+At the controllers level (tmdb-web only, since tmdb-api defines everything on one app class), filters are scoped to
+their controller. The report classifies each filter difference that scoping explains. There are two kinds: 19,470
+404s where controller filters no longer run, and 20 requests on one route where another controller's filter matched.
+The boot-time `filter_overlap` check reports that overlap too. Nothing else differs.
 
 With the trie matcher, 1,460 tmdb-web requests reach a different route. See
 [docs/upstream/mustermann-trie.md](../docs/upstream/mustermann-trie.md).

@@ -32,10 +32,13 @@ namespace :spike do
     end
   end
 
-  desc "Compare Reprise with the oracle's results, at the router and app levels (MATCHER=index|trie)"
+  # tmdb-api defines everything on one app class, so only tmdb-web has controllers to split out.
+  LEVELS = { "tmdb-api" => ["router", "app"], "tmdb-web" => ["router", "app", "controllers"] }.freeze
+
+  desc "Compare Reprise with the oracle's results, at each level (MATCHER=index|trie)"
   task :diff do
-    APPS.each do |app|
-      ["router", "app"].each { |level| ruby("spike/differential.rb", app, ENV.fetch("MATCHER", "index"), level) }
+    LEVELS.each do |app, levels|
+      levels.each { |level| ruby("spike/differential.rb", app, ENV.fetch("MATCHER", "index"), level) }
     end
   end
 

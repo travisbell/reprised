@@ -3,11 +3,17 @@
 require "rack/head"
 
 module Reprise
-  # A Rack application. Subclass it, define routes, and `run` the class:
+  # A Rack application. Subclass it, define routes or mount controllers, and `run` the class:
   #
   #   class App < Reprise::App
-  #     get "/movie/:id", provides: :json do
-  #       json(Movie.find(params[:id]))
+  #     helpers SessionHelpers          # global: the app's routes and every controller have these
+  #     before { load_current_user }    # runs for every request
+  #
+  #     mount MovieController
+  #     mount PersonController
+  #
+  #     get "/" do
+  #       "home"
   #     end
   #   end
   #
@@ -16,6 +22,155 @@ module Reprise
   # The first request finalizes the app: its definitions compile into frozen routers, and no more can be added.
   # Call App.finalize! at boot (before forking, or in Falcon's warmup) to do that up front.
   class App < Controller
+    FINALIZE_LOCK = Mutex.new
+    FILTER_OVERLAP = [:warn, :raise, :ignore].freeze
+    private_constant :FINALIZE_LOCK
+
+    class << self
+      # Controllers' restrictions don't apply to apps.
+      define_method(:set, DSL.instance_method(:set))
+      define_method(:use, DSL.instance_method(:use))
+      def settings = self
+      def app = self
+
+      # Rack entry point.
+      def call(env) = (@stack || finalize!.stack).call(env)
+
+      # Mounts controllers at this point in the app's definitions: their routes and filters take this place in
+      # definition order, as a Sinatra extension's do where it's registered.
+      def mount(*controllers)
+        ensure_definable!
+        controllers.each do |controller|
+          raise ArgumentError, "#{controller.inspect} isn't a Reprise::Controller" unless controller.is_a?(Class) && controller < Controller
+          raise ArgumentError, "#{controller} is an app; apps can't be mounted" if controller <= App
+
+          controller.mounted_in(self)
+          mount = Mount.new(controller:)
+          [routes, filters[:before], filters[:after]].each { it << mount }
+          (@controllers ||= []) << controller
+        end
+      end
+
+      def controllers = @controllers || []
+
+      # The global helpers module: the app compiles its routes, filters, and handlers into it, and every mounted
+      # controller includes it. It includes its parent app's.
+      def helpers_module
+        @helpers_module ||= super.tap do |mod|
+          mod.include(superclass.helpers_module) if superclass < App
+        end
+      end
+
+      # Compiles definitions into frozen routers and builds the middleware stack. Safe to call more than once;
+      # definitions are closed after the first call.
+      def finalize!
+        return self if @finalized
+
+        FINALIZE_LOCK.synchronize do
+          return self if @finalized
+
+          share_helpers unless settings.helper_isolation
+          routes = compiled(:routes)
+          @router = build_router(routes) { |route| route.verb }
+          @filter_routers = { before: build_router(compiled(:before)), after: build_router(compiled(:after)) }.freeze
+          @error_handlers = errors.transform_values { it.reverse.freeze }.freeze
+          check_filter_overlap(routes)
+          @stack = build_stack
+          @finalized = true
+        end
+        self
+      end
+
+      def finalized? = @finalized == true
+
+      attr_reader :stack
+
+      def router = @router || (finalize! && @router)
+      def filter_router(type) = (@filter_routers || (finalize! && @filter_routers)).fetch(type)
+
+      # Error handlers for +key+, newest first, from the nearest app class in the hierarchy that has any.
+      def error_handlers(key)
+        own = (@error_handlers || errors).fetch(key, nil)
+        return @error_handlers ? own : own.reverse if own
+        return superclass.error_handlers(key) if superclass < App
+
+        [].freeze
+      end
+
+      private
+
+      def compile_target = helpers_module
+
+      # The app's routes or filters of +kind+, mounted controllers' in their place, with options compiled into
+      # conditions.
+      def compiled(kind)
+        definitions = @definitions.fetch(kind).flat_map do |definition|
+          next definition unless definition.is_a?(Mount)
+
+          kind == :routes ? definition.controller.routes : definition.controller.filters.fetch(kind)
+        end
+        definitions.map do |definition|
+          options = definition.owner.compile_conditions(definition.options, self)
+          definition.with(conditions: (options + definition.conditions).freeze)
+        end
+      end
+
+      # With helper_isolation off, every controller's `helpers` are global, as Sinatra's extensions' helpers are.
+      def share_helpers
+        controllers.each { helpers_module.include(it.helpers_module) }
+      end
+
+      def build_router(definitions)
+        router = Router.new(matcher: settings.matcher, **settings.mustermann_opts)
+        definitions.each { |definition| router.add(block_given? ? yield(definition) : :any, definition.path || %r{.*}, definition) }
+        router.finalize!
+      end
+
+      # Warns (or raises, per the filter_overlap setting) when a controller's filter matches another controller's
+      # route: scoped to its own controller, it won't run for that route, as it would have in Sinatra.
+      def check_filter_overlap(routes)
+        mode = settings.filter_overlap
+        raise ArgumentError, "filter_overlap must be one of #{FILTER_OVERLAP}" unless FILTER_OVERLAP.include?(mode)
+        return if mode == :ignore
+
+        overlaps = routes.flat_map do |route|
+          next [] unless (path = sample_path(route.path))
+
+          @filter_routers.values.flat_map do |filters|
+            filters.each(:any, path).filter_map do |filter, _|
+              [filter, route] unless filter.owner <= App || filter.owner == route.owner
+            end
+          end
+        end
+        return if overlaps.empty?
+
+        message = overlaps.map do |filter, route|
+          "#{filter} in #{filter.owner} (#{filter.source_location&.join(":")}) matches #{route} in #{route.owner} " \
+            "(#{route.source_location&.join(":")}), but runs only for its own controller's routes"
+        end.join("\n  ")
+        raise ArgumentError, "Reprise: filters overlap other controllers' routes:\n  #{message}" if mode == :raise
+
+        Kernel.warn("Reprise: filters overlap other controllers' routes:\n  #{message}")
+      end
+
+      # A path +pattern+ matches, for checking which filters would apply to it, or nil for a regexp or Array.
+      def sample_path(pattern)
+        return unless pattern.is_a?(String)
+
+        mustermann = Mustermann.new(pattern, **settings.mustermann_opts)
+        mustermann.expand(:ignore, mustermann.names.to_h { [it, it == "splat" ? ["x"] * pattern.count("*") : "x"] })
+      rescue Mustermann::Error, ArgumentError
+        nil
+      end
+
+      def build_stack
+        app = ->(env) { Dispatch.new(self, env).call }
+        app = Rack::Head.new(app)
+        middleware.reverse_each { |klass, args, block| app = klass.new(app, *args, &block) }
+        app
+      end
+    end
+
     set :environment, (ENV["APP_ENV"] || ENV["RACK_ENV"] || :development).to_sym
     set :raise_errors, proc { test? }
     set :dump_errors, proc { !test? }
@@ -30,61 +185,7 @@ module Reprise
     set :matcher, :index
     set :json_encoder, ::JSON
     set :json_content_type, :json
-
-    FINALIZE_LOCK = Mutex.new
-    private_constant :FINALIZE_LOCK
-
-    class << self
-      # Rack entry point.
-      def call(env) = (@stack || finalize!.stack).call(env)
-
-      # Compiles routes, filters, and error handlers into frozen tables and builds the middleware stack. Safe to call
-      # more than once; definitions are closed after the first call.
-      def finalize!
-        return self if @finalized
-
-        FINALIZE_LOCK.synchronize do
-          return self if @finalized
-
-          @router = build_router(routes) { |route| route.verb }
-          @filter_routers = { before: build_router(filters[:before]), after: build_router(filters[:after]) }.freeze
-          @error_handlers = errors.transform_values { it.reverse.freeze }.freeze
-          @stack = build_stack
-          @finalized = true
-        end
-        self
-      end
-
-      def finalized? = @finalized == true
-
-      attr_reader :stack
-
-      def router = @router || (finalize! && @router)
-      def filter_router(type) = (@filter_routers || (finalize! && @filter_routers)).fetch(type)
-
-      # Error handlers for +key+, newest first, from the nearest class in the hierarchy that has any.
-      def error_handlers(key)
-        own = (@error_handlers || errors).fetch(key, nil)
-        return @error_handlers ? own : own.reverse if own
-        return superclass.error_handlers(key) if superclass.respond_to?(:error_handlers)
-
-        [].freeze
-      end
-
-      private
-
-      def build_router(definitions)
-        router = Router.new(matcher: settings.matcher, **settings.mustermann_opts)
-        definitions.each { |definition| router.add(block_given? ? yield(definition) : :any, definition.path || %r{.*}, definition) }
-        router.finalize!
-      end
-
-      def build_stack
-        app = ->(env) { new(env).call! }
-        app = Rack::Head.new(app)
-        middleware.reverse_each { |klass, args, block| app = klass.new(app, *args, &block) }
-        app
-      end
-    end
+    set :helper_isolation, true
+    set :filter_overlap, :warn
   end
 end
