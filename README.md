@@ -534,6 +534,24 @@ before("/ws/*") { halt 403 unless same_origin? }
 Reprised takes no locks while serving requests: routers and templates are frozen, or replaced atomically. Its Falcon
 specs run with [Async::Safe](https://github.com/socketry/async-safe) enabled.
 
+**A faster Rack adapter for Falcon:** `Reprised::Falcon::Adapter` turns Falcon's requests into Rack envs, as Falcon's
+default adapter (protocol-rack's) does. The env it builds is the same, key for key, in about 40% of the time and an
+eighth of the allocations: a request with 15 headers takes 2.2 µs and 10 allocations, against 5.6 µs and 79. That's
+about 4 µs off every request, for any Rack app. To use it, include its environment after Falcon's in `falcon.rb`:
+
+```ruby
+require "falcon/environment/rack"
+require "reprised/falcon"
+
+service "app.localhost" do
+  include Falcon::Environment::Rack
+  include Reprised::Falcon::Environment
+end
+```
+
+A `middleware` block in the service can still wrap it with `super()`. Outside `falcon-host`, use
+`Falcon::Server.protocol_middleware(Reprised::Falcon::Adapter.new(app))`. `bench/adapter.rb` measures both adapters.
+
 ## Plugins
 
 Plugins are optional, and load only when you use them: `plugin Reprised::Plugins::Name, **options`.

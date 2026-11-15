@@ -544,6 +544,19 @@ shareable, so a Ractor server can hand one app to every worker Ractor: the contr
 **8. Post-v1 (committed, not optional):** a native `Protocol::HTTP` adapter for Falcon-only apps that skips the Rack
   env translation. Before starting it, benchmark how much of per-request time the Rack translation actually costs.
 
+  Measured 2026-11-14 (`bench/adapter.rb`: in-process, YJIT, a request with 15 headers):
+  - protocol-rack's adapter costs about 7 µs and 100 allocations a request, more than Reprised's routing. Building
+    the env is most of that (5.6 µs, 79 allocations): each header's CGI name is built as three new strings, and
+    finding content-type downcases every header name. A native Protocol::HTTP app answers in 0.57 µs.
+  - `Reprised::Falcon::Adapter` builds the same env, key for key, in 2.2 µs and 10 allocations: names come from a
+    frozen table, in one pass. That takes about 4 µs off every request (`api`: 13.7 → 9.3 µs, 146 → 68 allocations).
+  - A native adapter could save only the 3–4 µs left, since Reprised would still index headers and build a response. It
+    would cost the Rack middleware ecosystem, and `Request`, params, cookies, and sessions rewritten over Protocol::HTTP.
+    Over real sockets (macOS, one Falcon process) the faster adapter gained about 4% on small routes. For apps whose
+    requests take milliseconds it's a fraction of a percent.
+  - So the native adapter waits until a workload shows these few µs matter. The adapter's env building could also go
+    upstream to protocol-rack.
+
 ---
 
 ## 8. Open questions

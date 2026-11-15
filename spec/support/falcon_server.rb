@@ -4,21 +4,24 @@ require "async"
 require "async/http/client"
 require "async/http/endpoint"
 require "falcon/server"
+require "reprised/falcon"
 
 # Runs a Rack app under a real Falcon server on a random port, for the duration of a block, inside a reactor:
 #
 #   with_falcon(app) { |client, url| client.get("/") }
 #
+# The app is served through +adapter+: protocol-rack's, as Falcon does by default, or Reprised::Falcon::Adapter.
+#
 # Apps run as in production (raise_errors off), so errors become responses as they would for real clients.
 module FalconServer
-  def with_falcon(app)
+  def with_falcon(app, adapter: Protocol::Rack::Adapter)
     app.set(:raise_errors, false)
     app.set(:dump_errors, false)
     Sync do |task|
       endpoint = Async::HTTP::Endpoint.parse("http://127.0.0.1:0")
       bound = endpoint.bound
       port = bound.sockets.first.local_address.ip_port
-      server = Falcon::Server.new(Falcon::Server.middleware(app), bound, protocol: endpoint.protocol, scheme: endpoint.scheme)
+      server = Falcon::Server.new(Falcon::Server.protocol_middleware(adapter.new(app)), bound, protocol: endpoint.protocol, scheme: endpoint.scheme)
       server_task = task.async { server.run }
 
       url = "http://127.0.0.1:#{port}"
