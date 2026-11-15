@@ -4,13 +4,13 @@ require_relative "../support/falcon_server"
 require "async/barrier"
 require "async/websocket/client"
 
-# Reprise under a real Falcon server. Run with ASYNC_SAFE=1 to also check for concurrent access to single-owner
+# Reprised under a real Falcon server. Run with ASYNC_SAFE=1 to also check for concurrent access to single-owner
 # objects (see spec_helper).
-RSpec.describe "Reprise under Falcon" do
+RSpec.describe "Reprised under Falcon" do
   include FalconServer
 
   it "handles requests concurrently: a route waiting on IO doesn't hold up the others" do
-    app = Class.new(Reprise::App) { get("/sleep") { sleep(0.2) and "slept" } }
+    app = Class.new(Reprised::App) { get("/sleep") { sleep(0.2) and "slept" } }
 
     with_falcon(app) do |client|
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -21,11 +21,11 @@ RSpec.describe "Reprise under Falcon" do
     end
   end
 
-  it "keeps Reprise.current in the tasks of an Async::Barrier the route starts" do
-    app = Class.new(Reprise::App) do
+  it "keeps Reprised.current in the tasks of an Async::Barrier the route starts" do
+    app = Class.new(Reprised::App) do
       get("/barrier") do
         barrier = Async::Barrier.new
-        scopes = Array.new(3) { barrier.async { sleep(0.01) and Reprise.current } }
+        scopes = Array.new(3) { barrier.async { sleep(0.01) and Reprised.current } }
         barrier.wait
         scopes.map(&:wait).all? { it.equal?(self) }.to_s
       end
@@ -35,7 +35,7 @@ RSpec.describe "Reprise under Falcon" do
   end
 
   it "sends a stream's writes as they're made" do
-    app = Class.new(Reprise::App) do
+    app = Class.new(Reprised::App) do
       get("/stream") do
         stream do |out|
           3.times do |index|
@@ -63,7 +63,7 @@ RSpec.describe "Reprise under Falcon" do
   end
 
   it "streams Server-Sent Events" do
-    app = Class.new(Reprise::App) do
+    app = Class.new(Reprised::App) do
       get("/events") { event_stream { |sse| 2.times { sse.event(:tick, it) } } }
     end
 
@@ -76,10 +76,10 @@ RSpec.describe "Reprise under Falcon" do
   end
 
   it "answers a route that overruns its timeout with 503, through error handlers" do
-    app = Class.new(Reprise::App) do
+    app = Class.new(Reprised::App) do
       get("/slow", timeout: 0.05) { sleep(1) and "too late" }
       get("/handled", timeout: 0.05) { sleep(1) }
-      error(Reprise::Timeout) { "timed out: #{error.message}" if request.path_info == "/handled" }
+      error(Reprised::Timeout) { "timed out: #{error.message}" if request.path_info == "/handled" }
     end
 
     with_falcon(app) do |client|
@@ -93,10 +93,10 @@ RSpec.describe "Reprise under Falcon" do
   end
 
   it "writes the Telemetry plugin's log line once the response has been sent" do
-    require "reprise/plugins/telemetry"
+    require "reprised/plugins/telemetry"
     lines = []
-    app = Class.new(Reprise::App) do
-      plugin Reprise::Plugins::Telemetry, requests: { log: ->(_env, message, fields) { lines << [message, fields[:route]] } }
+    app = Class.new(Reprised::App) do
+      plugin Reprised::Plugins::Telemetry, requests: { log: ->(_env, message, fields) { lines << [message, fields[:route]] } }
       get("/slow/:id") do
         stream do |out|
           out << "a"
@@ -118,10 +118,10 @@ RSpec.describe "Reprise under Falcon" do
 
   describe "websockets" do
     it "upgrades the request and runs the block with the connection, in the request's scope" do
-      app = Class.new(Reprise::App) do
+      app = Class.new(Reprised::App) do
         helpers { def greeting = "hello" }
         websocket("/echo/:name") do |connection|
-          connection.write("#{greeting} #{params[:name]} #{Reprise.current.equal?(self)}")
+          connection.write("#{greeting} #{params[:name]} #{Reprised.current.equal?(self)}")
           while (message = connection.read)
             connection.write("echo #{message.to_str}")
             connection.flush
@@ -146,7 +146,7 @@ RSpec.describe "Reprise under Falcon" do
       handler = Class.new(Async::WebSocket::Connection) do
         def read(...) = super&.then { Protocol::WebSocket::TextMessage.new("handled") }
       end
-      app = Class.new(Reprise::App) do
+      app = Class.new(Reprised::App) do
         websocket("/ws", handler:, extensions: nil) do |connection|
           connection.write(connection.read)
           connection.flush

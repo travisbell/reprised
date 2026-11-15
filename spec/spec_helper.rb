@@ -2,7 +2,7 @@
 
 ENV["RACK_ENV"] = "test"
 
-require "reprise"
+require "reprised"
 require "rack/test"
 require_relative "support/app_helpers"
 
@@ -19,5 +19,5 @@ RSpec.configure do |config|
 
   config.expect_with(:rspec) { |c| c.syntax = :expect }
   config.include(AppHelpers, type: :app)
-  config.define_derived_metadata(file_path: %r{/spec/reprise/app/}) { |metadata| metadata[:type] = :app }
+  config.define_derived_metadata(file_path: %r{/spec/reprised/app/}) { |metadata| metadata[:type] = :app }
 end

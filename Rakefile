@@ -6,7 +6,7 @@ RSpec::Core::RakeTask.new(:spec)
 
 task default: :spec
 
-# The phase 0 spike: compares Reprise's routing with Sinatra's on TMDB's real route tables. Needs the apps checked
+# The phase 0 spike: compares Reprised's routing with Sinatra's on TMDB's real route tables. Needs the apps checked
 # out beside this repo (~/workspace/tmdb-web, ~/workspace/tmdb-api). See spike/README.md.
 namespace :spike do
   APPS = ["tmdb-api", "tmdb-web"].freeze
@@ -17,7 +17,7 @@ namespace :spike do
   end
 
   # Where an app's Sinatra checkout is: TMDB_API_DIR / TMDB_WEB_DIR, or beside this repo. Once an app has moved to
-  # Reprise, point its variable at a checkout (or worktree) that's still on Sinatra.
+  # Reprised, point its variable at a checkout (or worktree) that's still on Sinatra.
   def checkout(app) = ENV.fetch("#{app.upcase.tr("-", "_")}_DIR", "#{WORKSPACE}/#{app}")
 
   desc "Extract route tables from the TMDB apps"
@@ -39,14 +39,14 @@ namespace :spike do
   # tmdb-api defines everything on one app class, so only tmdb-web has controllers to split out.
   LEVELS = { "tmdb-api" => ["router", "app"], "tmdb-web" => ["router", "app", "controllers"] }.freeze
 
-  desc "Compare Reprise with the oracle's results, at each level (MATCHER=index|trie)"
+  desc "Compare Reprised with the oracle's results, at each level (MATCHER=index|trie)"
   task :diff do
     LEVELS.each do |app, levels|
       levels.each { |level| ruby("spike/differential.rb", app, ENV.fetch("MATCHER", "index"), level) }
     end
   end
 
-  desc "Benchmark routing in Sinatra and Reprise"
+  desc "Benchmark routing in Sinatra and Reprised"
   task :bench do
     APPS.each do |app|
       route_index = "#{WORKSPACE}/#{app}/lib/route_index.rb"

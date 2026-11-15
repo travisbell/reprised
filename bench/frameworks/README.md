@@ -1,4 +1,4 @@
-# Reprise vs Sinatra, Roda, and Hanami
+# Reprised vs Sinatra, Roda, and Hanami
 
 `bench.rb` runs the same workloads on each framework, each written the way that framework is meant to be used, and
 checks every app gives the expected response before measuring it.
@@ -34,10 +34,10 @@ How each framework is set up:
 
 ## Results (2026-11-14)
 
-Ruby 4.0.9 with YJIT, Apple Silicon. Reprise 0.1.0, Sinatra 4.2.1, Roda 3.110.0, hanami-router 3.0.0 with
+Ruby 4.0.9 with YJIT, Apple Silicon. Reprised 0.1.0, Sinatra 4.2.1, Roda 3.110.0, hanami-router 3.0.0 with
 hanami-controller 2.3.2, all on Mustermann 3.1.1. Times under 3 µs vary by about ±10% between runs.
 
-| workload | Reprise | Sinatra | Roda | Hanami |
+| workload | Reprised | Sinatra | Roda | Hanami |
 |---|---|---|---|---|
 | hello | 1.63 µs (13) | 4.94 (56) | **0.72** (11) | 14.65 (227) |
 | params | 3.54 (24) | 7.60 (84) | **2.73** (36) | 13.18 (174) |
@@ -50,15 +50,15 @@ hanami-controller 2.3.2, all on Mustermann 3.1.1. Times under 3 µs vary by abou
 
 Reading it:
 
-- **Reprise vs Sinatra:** 2–3× faster on small apps, and 65× (large table) and 150× (404s) on many routes. Sinatra
+- **Reprised vs Sinatra:** 2–3× faster on small apps, and 65× (large table) and 150× (404s) on many routes. Sinatra
   tries routes one by one, and a 404 tries them all.
-- **Reprise vs Roda:** Roda is 1.3–2.6× faster outside templates, and Reprise renders ERB about 25% faster. Roda's
+- **Reprised vs Roda:** Roda is 1.3–2.6× faster outside templates, and Reprised renders ERB about 25% faster. Roda's
   routing tree runs as part of the route block, with one object per request, plain-Hash headers, and nothing to skip.
-  Reprise keeps Sinatra's model (filters, conditions, error handlers, `pass`, controller scopes, Rack::Headers'
-  case-insensitive headers, and `Reprise.current`), and its remaining cost is spread across those. Closing it further
+  Reprised keeps Sinatra's model (filters, conditions, error handlers, `pass`, controller scopes, Rack::Headers'
+  case-insensitive headers, and `Reprised.current`), and its remaining cost is spread across those. Closing it further
   would mean dropping one of them.
 - **Hanami:** `Hanami::Action` dominates its cost (configuration read through `method_missing`, `Accept`
   negotiation). Its router alone is fast, as the 404s show.
 
-Earlier on 2026-11-14, before the gap-closing pass, Reprise measured hello 2.26, params 4.11, filters 4.14, large table
+Earlier on 2026-11-14, before the gap-closing pass, Reprised measured hello 2.26, params 4.11, filters 4.14, large table
 2.82, 404 2.68, and erb 6.85.

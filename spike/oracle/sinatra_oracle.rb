@@ -2,7 +2,7 @@
 
 # Replays an extracted route table (spike/extract_routes.rb) into a bare Sinatra 4.2 app, sends it a generated corpus
 # of requests, and records what Sinatra decided for each: which route answered, its params, the content type a
-# `provides` condition set, and which filters ran. spike/differential.rb then asks Reprise the same questions.
+# `provides` condition set, and which filters ran. spike/differential.rb then asks Reprised the same questions.
 #
 #   cd spike/oracle && bundle exec ruby sinatra_oracle.rb ../fixtures/tmdb-web.routes.json ../results/tmdb-web.oracle.jsonl
 #

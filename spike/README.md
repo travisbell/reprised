@@ -1,20 +1,20 @@
-# Phase 0 spike: Reprise routing vs Sinatra on TMDB's route tables
+# Phase 0 spike: Reprised routing vs Sinatra on TMDB's route tables
 
-This checks that Reprise picks the same route as Sinatra 4.2, with the same params and content type and the same
+This checks that Reprised picks the same route as Sinatra 4.2, with the same params and content type and the same
 filters, for every route tmdb-web and tmdb-api define. It also measures what that routing costs.
 
 ```sh
 bundle exec rake spike          # extract → oracle → diff (needs ~/workspace/tmdb-web and ~/workspace/tmdb-api)
 TMDB_API_DIR=../api-sinatra bundle exec rake spike   # extract from a checkout still on Sinatra, once the app has moved
-bundle exec rake spike:diff     # re-compare only, after changing lib/reprise (MATCHER=trie to try the trie)
-bundle exec rake spike:bench    # Sinatra vs Reprise routing cost
+bundle exec rake spike:diff     # re-compare only, after changing lib/reprised (MATCHER=trie to try the trie)
+bundle exec rake spike:bench    # Sinatra vs Reprised routing cost
 ```
 
 | Step | File | Bundle | Output |
 |---|---|---|---|
 | Extract | `extract_routes.rb` | the app's own (it boots the app) | `fixtures/<app>.routes.json`: every route and filter, in Sinatra's order, with options and source |
 | Oracle | `oracle/sinatra_oracle.rb` | `oracle/Gemfile` (Sinatra 4.2.1, Mustermann 3.1.1) | `results/<app>.oracle.jsonl`: Sinatra's decision for each generated request |
-| Diff | `differential.rb` (with `table.rb`, `app_table.rb`) | this gem's (Mustermann 4) | differences, grouped; exits 1 if any. Runs at three levels: `router` (the router directly), `app` (a `Reprise::App` built from the table, called through Rack), and `controllers` (the same, with each controller file's definitions in its own mounted `Reprise::Controller`) |
+| Diff | `differential.rb` (with `table.rb`, `app_table.rb`) | this gem's (Mustermann 4) | differences, grouped; exits 1 if any. Runs at three levels: `router` (the router directly), `app` (a `Reprised::App` built from the table, called through Rack), and `controllers` (the same, with each controller file's definitions in its own mounted `Reprised::Controller`) |
 | Bench | `oracle/bench_sinatra.rb`, `../bench/routing.rb`; `oracle/bench_templates.rb`, `../bench/templates.rb` | both | µs per request |
 | Compile views | `compile_views.rb VIEWS_DIR` | this gem's | compiles every `.erb` with the ActionView plugin's options; reports failures |
 
@@ -38,7 +38,7 @@ status, route, params, content type, and the filters run all match. The one know
 
 - **Filter captures don't leak.** Sinatra's `process_route` restores the params a filter's pattern added, but not
   `params["captures"]`, so a regexp filter's captures leak into the route after it (2,460 tmdb-web requests, from one
-  regexp filter). Reprise scopes them to the filter. Neither app reads captures outside the filter or route that set
+  regexp filter). Reprised scopes them to the filter. Neither app reads captures outside the filter or route that set
   them.
 
 At the controllers level (tmdb-web only, since tmdb-api defines everything on one app class), filters are scoped to
@@ -51,7 +51,7 @@ With the trie matcher, 1,460 tmdb-web requests reach a different route. See
 
 Routing cost per request, with route and filter bodies that do nothing:
 
-| | Sinatra 4.2.1 | Sinatra minus 1-route baseline | Reprise index | Reprise trie |
+| | Sinatra 4.2.1 | Sinatra minus 1-route baseline | Reprised index | Reprised trie |
 |---|---|---|---|---|
 | tmdb-web, one request per route (1,145) | 212.0 µs | ~201 µs | **16.7 µs** | 12.8 µs |
 | tmdb-web, 404s (200) | 142.4 µs | ~132 µs | **6.5 µs** | 5.2 µs |
@@ -61,7 +61,7 @@ Routing cost per request, with route and filter bodies that do nothing:
 A full Rack call through each framework (2026-11-14, after phase 1; see PLAN.md's performance pass for where it is
 now: 211.7 → 17.1 µs on tmdb-web routed, 78.1 → 12.3 µs on tmdb-api, same harness):
 
-| | Sinatra 4.2.1 | Reprise::App |
+| | Sinatra 4.2.1 | Reprised::App |
 |---|---|---|
 | tmdb-web, one request per route | 220.3 µs | **39.9 µs** |
 | tmdb-web, 404s | 147.1 µs | **20.8 µs** |

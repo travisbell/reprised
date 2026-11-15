@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-# For specs that drive a Reprise::App through Rack::Test: `mock_app { get("/") { "hi" } }`, then `get "/"`.
+# For specs that drive a Reprised::App through Rack::Test: `mock_app { get("/") { "hi" } }`, then `get "/"`.
 module AppHelpers
   include Rack::Test::Methods
 
-  def mock_app(base = Reprise::App, &block)
+  def mock_app(base = Reprised::App, &block)
     @app = Class.new(base, &block)
   end
 

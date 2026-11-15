@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-# Loads an extracted route table (spike/extract_routes.rb) into Reprise routers, for spike/differential.rb and the
+# Loads an extracted route table (spike/extract_routes.rb) into Reprised routers, for spike/differential.rb and the
 # benchmarks. Conditions are the ones the TMDB fixtures use: provides, and tmdb-web's only_provides.
 
 require "bundler/setup"
 require "json"
-require_relative "../lib/reprise"
+require_relative "../lib/reprised"
 
 module Spike
   ROOT = __dir__
@@ -24,8 +24,8 @@ module Spike
     def initialize(app, fixture, matcher:)
       @app = app
       @records = {}
-      @routes = Reprise::Router.new(matcher:)
-      @filters = { "before" => Reprise::Router.new(matcher:), "after" => Reprise::Router.new(matcher:) }
+      @routes = Reprised::Router.new(matcher:)
+      @filters = { "before" => Reprised::Router.new(matcher:), "after" => Reprised::Router.new(matcher:) }
 
       fixture.fetch("records").each do |raw|
         record = Record.new(index: raw["index"], type: raw["type"], verb: raw["verb"], head: Table.head?(raw),
@@ -52,7 +52,7 @@ module Spike
       end
     end
 
-    # What Reprise decides for a request: the route (or nil), its params and content type, and the filters that run.
+    # What Reprised decides for a request: the route (or nil), its params and content type, and the filters that run.
     def dispatch(verb, path, accept)
       content_type = nil
       record, params = @routes.find(verb, path) do |candidate, _params|
@@ -75,10 +75,10 @@ module Spike
       record.conditions.each do |name, value|
         case name
         when "provides"
-          content_type = Reprise::Negotiation.preferred_type(accept, value.fetch("mime_types")) or return [false, nil]
+          content_type = Reprised::Negotiation.preferred_type(accept, value.fetch("mime_types")) or return [false, nil]
         when "only_provides"
           first = accept.first.to_s
-          types = value.flat_map { Reprise::Negotiation.mime_types(it) }
+          types = value.flat_map { Reprised::Negotiation.mime_types(it) }
           return [false, nil] unless types.any? { first.start_with?(it) }
         else
           raise "unknown condition #{name}"

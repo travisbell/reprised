@@ -19,7 +19,7 @@ group :test do
   gem "sprockets", "~> 4.2"
   gem "zeitwerk", "~> 2.7"
 
-  # Async features, and the integration specs that run Reprise under a real Falcon server.
+  # Async features, and the integration specs that run Reprised under a real Falcon server.
   gem "async", "~> 2.46"
   gem "async-http", "~> 0.105"
   gem "async-safe", "~> 0.5"
@@ -37,5 +37,5 @@ group :benchmark do
   gem "stackprof"
 end
 
-# Reprise supports Mustermann 3.1+ and 4. CI tests both: MUSTERMANN_VERSION="~> 3.1" bundle install.
+# Reprised supports Mustermann 3.1+ and 4. CI tests both: MUSTERMANN_VERSION="~> 3.1" bundle install.
 gem "mustermann", ENV.fetch("MUSTERMANN_VERSION", ">= 3.1")

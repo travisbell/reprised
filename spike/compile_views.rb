@@ -1,17 +1,17 @@
 # frozen_string_literal: true
 
-# Compiles every ERB template in a views directory with Reprise's template compiler, as the ActionView plugin
+# Compiles every ERB template in a views directory with Reprised's template compiler, as the ActionView plugin
 # configures it, and reports any that don't compile. Nothing is rendered, so the app's code isn't needed.
 #
 #   bundle exec ruby spike/compile_views.rb ~/workspace/tmdb-web/views
 
 require "bundler/setup"
-require_relative "../lib/reprise"
-require_relative "../lib/reprise/plugins/action_view"
+require_relative "../lib/reprised"
+require_relative "../lib/reprised/plugins/action_view"
 
 views = ARGV.fetch(0) { abort("usage: compile_views.rb VIEWS_DIR") }
 options = {
-  engine_class: Erubi::CaptureBlockEngine, bufval: "::Reprise::Plugins::ActionView::Buffer.new", bufvar: "@output_buffer"
+  engine_class: Erubi::CaptureBlockEngine, bufval: "::Reprised::Plugins::ActionView::Buffer.new", bufvar: "@output_buffer"
 }
 failures = []
 files = Dir.glob("**/*.erb", base: views).sort
@@ -19,7 +19,7 @@ started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
 files.each do |file|
   path = File.join(views, file)
-  template = Reprise::Template.new(File.read(path, mode: "rb").force_encoding("utf-8"), path:, options:)
+  template = Reprised::Template.new(File.read(path, mode: "rb").force_encoding("utf-8"), path:, options:)
   template.__send__(:compile, [:example_local])
 rescue SyntaxError, StandardError => e
   failures << [file, e.message.lines.first.strip]

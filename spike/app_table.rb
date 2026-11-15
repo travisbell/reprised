@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# Replays an extracted route table into a Reprise::App, as spike/oracle/sinatra_oracle.rb does into Sinatra, so the
+# Replays an extracted route table into a Reprised::App, as spike/oracle/sinatra_oracle.rb does into Sinatra, so the
 # differential test can compare whole requests (status, route, params, content type, filters run) through Rack.
 #
-# With controllers: true, each controller file's routes and filters go into its own Reprise::Controller, mounted where
+# With controllers: true, each controller file's routes and filters go into its own Reprised::Controller, mounted where
 # the file's first definition was, and everything else stays on the app, which is how the app would be structured
 # after migrating. Filters are then scoped to their controller.
 
@@ -13,10 +13,10 @@ require "rack/mock"
 module Spike
   class AppTable
     # Custom conditions the fixtures use, written Sinatra-style (a class method calling `condition`), the way the apps
-    # define them, so that path through Reprise is exercised too.
+    # define them, so that path through Reprised is exercised too.
     module Conditions
       def only_provides(*types)
-        condition { types.flat_map { Reprise::Negotiation.mime_types(it) }.any? { request.preferred_type.to_s.start_with?(it) } }
+        condition { types.flat_map { Reprised::Negotiation.mime_types(it) }.any? { request.preferred_type.to_s.start_with?(it) } }
       end
     end
 
@@ -25,7 +25,7 @@ module Spike
     attr_reader :app, :records
 
     # +record+: whether route and filter bodies record what ran (for the differential test), or do nothing (for
-    # benchmarks, so they measure Reprise rather than the recording).
+    # benchmarks, so they measure Reprised rather than the recording).
     def self.load(app_name, matcher: :index, controllers: false, record: true)
       new(JSON.parse(File.read("#{ROOT}/fixtures/#{app_name}.routes.json")), matcher:, controllers:, record:)
     end
@@ -43,7 +43,7 @@ module Spike
       records = fixture.fetch("records")
       @owners = records.to_h { [it["index"], (controllers && it["source"][CONTROLLER_FILE]) || :app] }
 
-      @app = Class.new(Reprise::App) do
+      @app = Class.new(Reprised::App) do
         set :environment, :production
         set :raise_errors, false
         set :dump_errors, false
@@ -59,7 +59,7 @@ module Spike
         target = if owner == :app
           @app
         else
-          mounted[owner] ||= Class.new(Reprise::Controller).tap { @app.mount(it) }
+          mounted[owner] ||= Class.new(Reprised::Controller).tap { @app.mount(it) }
         end
         define(target, record)
       end

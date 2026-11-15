@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # The reference Sinatra, pinned to what tmdb-web and tmdb-api run. Kept apart from the gem's own bundle because
-# Sinatra 4.2 requires Mustermann ~> 3.0 and Reprise requires ~> 4.0.
+# Sinatra 4.2 requires Mustermann ~> 3.0 and Reprised requires ~> 4.0.
 source "https://rubygems.org"
 
 gem "erubi", "1.13.1" # for bench_templates.rb, with the template engine tmdb-web uses

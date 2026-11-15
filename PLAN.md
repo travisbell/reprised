@@ -1,4 +1,4 @@
-# Reprise Router: Plan
+# Reprised: Plan
 
 A Rack 3 router with Sinatra's controller DSL, built for Ruby 4.0, Mustermann 4, and Falcon/Async. It keeps the parts of
 Sinatra that controllers actually use, drops the rest, and is validated against TMDB's production Sinatra apps, so
@@ -11,9 +11,9 @@ migrating TMDB's apps (phases 6–7).
 
 | # | Decision |
 |---|---|
-| 1 | Class-based controllers: `class X < Reprise::Controller` |
+| 1 | Class-based controllers: `class X < Reprised::Controller` |
 | 2 | Route first, then filters scoped to their owner. Controller filters don't run when no route matches |
-| 3 | Gem `reprise-router`, code under `lib/reprise/`, top-level module `Reprise`, `require "reprise"` |
+| 3 | Gem `reprised`, code under `lib/reprised/`, top-level module `Reprised`, `require "reprised"`. Renamed from `reprise-router`/`Reprise` on 2026-11-14, since the unrelated `reprise` gem (recurring calendar events) has the same `require` and top-level module |
 | 4 | Apps that define everything on one reopened app class (`class API < Sinatra::Base` in many files) are first-class. Multi-verb `route`, `json`, `mime_type`, and `configure :env` are core |
 | 5 | Tests use RSpec |
 | 6 | Routing uses a literal-segment index over Mustermann patterns, not `Mustermann::Set`'s trie (phase 0, §3) |
@@ -40,7 +40,7 @@ In TMDB's two apps, almost all controller code uses a small surface: verb routes
 a couple of custom conditions, pattern filters, error handlers by class and status, `halt`/`redirect`/`pass`, `erb` with
 explicit layouts and locals, Phlex components, `content_type`/`cache_control`/`expires`, `send_file`, `session`, and
 `cookies`. Streaming, `forward`, `etag`/`last_modified` helpers, `url()`, the `user_agent`/`host_name` conditions, and
-non-ERB engines go unused. That decides what Reprise keeps (§3).
+non-ERB engines go unused. That decides what Reprised keeps (§3).
 
 ---
 
@@ -68,12 +68,12 @@ non-ERB engines go unused. That decides what Reprise keeps (§3).
 
 ```ruby
 # app.rb
-class App < Reprise::App
-  plugin Reprise::Plugins::ActionView, helpers: [
+class App < Reprised::App
+  plugin Reprised::Plugins::ActionView, helpers: [
     ActionView::Helpers::TagHelper, ActionView::Helpers::FormHelper # ...
   ]
-  plugin Reprise::Plugins::Phlex, view_paths: %w[app/components app/views]
-  plugin Reprise::Plugins::OpenTelemetry, skip_errors: [MyApp::NotFound]
+  plugin Reprised::Plugins::Phlex, view_paths: %w[app/components app/views]
+  plugin Reprised::Plugins::OpenTelemetry, skip_errors: [MyApp::NotFound]
 
   set :views, File.join(__dir__, "views")   # settings survive as a plain frozen key/value store
 
@@ -89,7 +89,7 @@ class App < Reprise::App
 end
 
 # controllers/movie_controller.rb
-class MovieController < Reprise::Controller
+class MovieController < Reprised::Controller
   # Private to this controller: these are plain instance methods. `helpers do ... end` also works and means the same.
   private def load_movie = (@movie = Movie.find(params[:id]) or halt 404)
 
@@ -108,11 +108,11 @@ end
 
 ### Controllers and private helpers
 
-- `Reprise::App < Reprise::Controller`. The App is itself a controller that owns its own routes, filters, and methods.
-  So an app that reopens one class across many files keeps that shape (`class API < Reprise::App`), and its class-body
+- `Reprised::App < Reprised::Controller`. The App is itself a controller that owns its own routes, filters, and methods.
+  So an app that reopens one class across many files keeps that shape (`class API < Reprised::App`), and its class-body
   `def`s work in its own routes.
-- `Reprise::Controller` is the per-request scope class. A request's scope is an instance of the matched route's
-  controller (`Reprise::Dispatch` runs the request). Helpers are ordinary methods, so `private`, `super`, and
+- `Reprised::Controller` is the per-request scope class. A request's scope is an instance of the matched route's
+  controller (`Reprised::Dispatch` runs the request). Helpers are ordinary methods, so `private`, `super`, and
   `Module#prepend` all work as they normally do.
 - **Global helpers live in the app's helpers module** (`App.helpers_module`). `helpers do ... end` and
   `helpers SomeModule` on the app add to it, and `mount` includes it in the controller. Controller methods sit above
@@ -142,7 +142,7 @@ end
   and its pattern matches. A route reached by `pass` from another controller's route runs its own controller's before
   filters first (not the app's again), and after filters run for every controller whose before filters ran, so a
   `pass` can't skip a controller's filters. Definition order across App and controller filters is preserved exactly. `route` (the
-  matched `Reprise::Route`) is available inside `before` filters.
+  matched `Reprised::Route`) is available inside `before` filters.
 - When no route matches, only App filters run. A controller filter no longer runs on a 404 path that happens to match
   its pattern (`before "/teams/*"` on `/teams/nope`). Global filters still run, so error pages get whatever the app's
   filters set up.
@@ -161,7 +161,7 @@ end
 
 ### Routing
 
-- **Matcher: a literal-segment index over Mustermann 4 patterns** (`Reprise::Router`, `matcher: :index`). Each pattern
+- **Matcher: a literal-segment index over Mustermann 4 patterns** (`Reprised::Router`, `matcher: :index`). Each pattern
   is indexed by its leading literal segments (`/movie/:id` sits under `movie`). For a given path, the router tries only
   the patterns under the segments the path starts with, plus those with no literal prefix, in definition order. Each
   candidate is matched by its own Mustermann pattern, so matching is the same as Sinatra's and only the candidate
@@ -169,7 +169,7 @@ end
 - **Not `Mustermann::Set`, for now.** Its trie in 4.0.1 mis-matches common Sinatra forms (`/a/?`, `/a/*` on `/a/`,
   `/:id.json`, `/tv/:id/edit/?*`). It sent 1,460 of 132,570 test requests to a different route. Its `strict_order`
   mode also computes every match before sorting, so it has no "first match" fast path. It stays available as
-  `matcher: :trie` (experimental, partly patched in `Reprise::MustermannFixes`) for re-checking once upstream fixes it.
+  `matcher: :trie` (experimental, partly patched in `Reprised::MustermannFixes`) for re-checking once upstream fixes it.
   The trie was only about 25% faster than the index. Draft issue: [docs/upstream/mustermann-trie.md](docs/upstream/mustermann-trie.md).
 - Regexp routes and filters sit at the index root (no literal prefix), so they're tried for every path, in definition
   order.
@@ -179,9 +179,9 @@ end
   MultiRoute.
 - HEAD is answered by `get` routes, in their place among any `head` routes, as in Sinatra; `route :get` (MultiRoute) doesn't answer it unless :head is listed. An optional `trailing_slash: :optional` app setting will make the `/?` suffix unnecessary.
   It's off by default for compatibility.
-- `Reprise::Route` (a `Data`) has the verb, path, options, compiled conditions, action, timeout, owner, and source
+- `Reprised::Route` (a `Data`) has the verb, path, options, compiled conditions, action, timeout, owner, and source
   location. `Route#pattern` is the path as written, which is what telemetry reports. `App.routes` and `App.filters`
-  are the finalized tables, mounted controllers included. They back `reprise routes` and can feed Falcon's `warmup`.
+  are the finalized tables, mounted controllers included. They back `reprised routes` and can feed Falcon's `warmup`.
 - Named routes and `path_for(:movie, id:)` via `Mustermann::Pattern#expand`. This is a later phase and optional.
 
 ### Conditions
@@ -200,13 +200,13 @@ end
 
 | Kept | Dropped |
 |---|---|
-| `params` (indifferent, as `Reprise::Params`), block args from captures, `:splat`, `:captures` | `settings` as a proc-backed object (now a frozen hash, `settings[:key]` / `settings.key`) |
+| `params` (indifferent, as `Reprised::Params`), block args from captures, `:splat`, `:captures` | `settings` as a proc-backed object (now a frozen hash, `settings[:key]` / `settings.key`) |
 | `request`, `response`, `env`, `session`, `cookies` (built in, replacing sinatra-contrib) | `forward`, `stream` (replaced, §4), `last_modified`, `etag` (use `Rack::ConditionalGet`) |
 | `halt`, `pass`, `redirect`, `status`, `headers`, `body`, `content_type`, `mime_type` | `back`, `uri`/`url`/`to` (only `path_for` if wanted) |
 | `cache_control`, `expires`, `send_file`, `attachment`, `json` | `enable :sessions`, `:static`, `:protection`, `:logging`, `:show_exceptions`, `:lock`, `:threaded`, `run!`, classic mode / `Sinatra::Delegator`, inline templates |
 | `error` (the current exception; replaces `env["sinatra.error"]`), `route` | Tilt and all non-ERB engines |
 | `configure(*envs) { }`: runs the block when `RACK_ENV` matches, at class-definition time | `set :public_folder`/`:static` (use `Rack::Static` in `config.ru`) |
-| `raise_errors` setting (re-raise in test instead of handling), `Reprise::NotFound` (replaces `Sinatra::NotFound`) | |
+| `raise_errors` setting (re-raise in test instead of handling), `Reprised::NotFound` (replaces `Sinatra::NotFound`) | |
 
 Static files, protection, sessions, and the dev error page belong in `config.ru` middleware.
 
@@ -216,19 +216,19 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
 
 ## 4. Falcon + Async at the ground level
 
-- **`Reprise.current` is the request scope, kept in fiber storage** (`Fiber[]`). Dispatch sets it, follows the scope
+- **`Reprised.current` is the request scope, kept in fiber storage** (`Fiber[]`). Dispatch sets it, follows the scope
   into the matched controller, and restores the previous value afterwards. Async tasks inherit fiber storage, so
   services, Phlex components, and the tasks of an `Async::Barrier` a route starts can all reach the request without
   passing it along. Nothing uses `Thread.current`.
 - **Concurrency is async's own `Barrier`** (`Barrier do |barrier| ... end`, from the async gem). It's already
-  structured: children are waited for, and stopped on exit or on an exception. A Reprise `concurrently` would only
-  duplicate it, so there isn't one. What Reprise guarantees is that `Reprise.current` works inside it.
+  structured: children are waited for, and stopped on exit or on an exception. A Reprised `concurrently` would only
+  duplicate it, so there isn't one. What Reprised guarantees is that `Reprised.current` works inside it.
 - **Timeouts per route:** `get "/x", timeout: 5` runs the route body under the request's Async task's
-  `with_timeout`. Overrunning raises `Reprise::Timeout` (503), which error handlers can catch. Without an Async server
+  `with_timeout`. Overrunning raises `Reprised::Timeout` (503), which error handlers can catch. Without an Async server
   the route runs untimed, with a warning once. Async is only loaded when a route has a timeout.
 - **Streaming uses Rack 3 streaming bodies** (`body.call(stream)`), which Falcon sends as they're written:
   - `stream { |out| out << chunk }` runs once the server sends the body, with the request's params and
-    `Reprise.current`. A disconnected client ends the block. Sinatra's `keep_open` has no Rack 3 equivalent: to keep
+    `Reprised.current`. A disconnected client ends the block. Sinatra's `keep_open` has no Rack 3 equivalent: to keep
     a stream open, keep the block running.
   - `event_stream { |sse| sse.event(:update, data, id:) }` provides Server-Sent Events: `data`, `comment`, and
     `retry` too, with `text/event-stream`, `no-cache`, and `x-accel-buffering: no`.
@@ -236,7 +236,7 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
   that matches only upgrade requests. Others fall through to the next route. The block runs in the request's scope,
   with the route's params, once the connection is upgraded. Options (`handler:`, `extensions:`, `protocols:`) go to
   async-websocket's Rack adapter.
-- **Fiber safety:** routers and templates are frozen or replaced atomically. `Reprise::Dispatch` is marked
+- **Fiber safety:** routers and templates are frozen or replaced atomically. `Reprised::Dispatch` is marked
   single-owner for Async::Safe. CI runs the Falcon integration specs with Async::Safe enabled.
 - **Later:** early flush for ERB/Phlex layouts (send `<head>` before the route's queries finish), and the native
   Protocol::HTTP adapter (phase 8).
@@ -245,7 +245,7 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
 
 ### ERB (core)
 
-- `Reprise::Template` compiles a template with Erubi once, and each set of local names compiles that into a method.
+- `Reprised::Template` compiles a template with Erubi once, and each set of local names compiles that into a method.
   Rendering calls the method on the request scope, so templates see its helpers and instance variables. There's no
   Tilt.
 - The default engine is `Erubi::CaptureBlockEngine`, so a helper that takes a block of template (`<%= box do %>...
@@ -269,7 +269,7 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
 
 ### ActionView plugin
 
-- `plugin Reprise::Plugins::ActionView, helpers: [...]` makes ERB write to an ActionView-compatible output buffer in
+- `plugin Reprised::Plugins::ActionView, helpers: [...]` makes ERB write to an ActionView-compatible output buffer in
   `@output_buffer`, so block helpers (`form_tag do`, `tag.div do`) capture their blocks and helper output isn't
   escaped twice.
 - It adds the given ActionView helper modules to the global helpers.
@@ -277,18 +277,18 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
 
 ### Phlex plugin
 
-- `plugin Reprise::Plugins::Phlex` adds `phlex(component, layout:, locals:)`, and makes `render` take a component, in
+- `plugin Reprised::Plugins::Phlex` adds `phlex(component, layout:, locals:)`, and makes `render` take a component, in
   routes and in ERB (`<%= render Card.new(movie) %>`). With a layout, the ERB layout `yield`s the component's output
   and gets the locals.
-- Components get the request scope as `context[:reprise]`.
+- Components get the request scope as `context[:reprised]`.
 - With `rails: true` (phlex-rails and the ActionView plugin), components render through a memoized ActionView view
   context class and a per-request lookup context, so phlex-rails' helper adapters work. That also gives the request
   ActionDispatch-style `headers`.
-- After phase 4, components will reach the request through `Reprise.current` too.
+- After phase 4, components will reach the request through `Reprised.current` too.
 
 ### Sprockets plugin
 
-- `plugin Reprise::Plugins::Sprockets, environment:, prefix: "/assets", manifest:, digest:, serve:` sets `assets`,
+- `plugin Reprised::Plugins::Sprockets, environment:, prefix: "/assets", manifest:, digest:, serve:` sets `assets`,
   `assets_prefix`, `assets_manifest`, and `assets_digest`, and adds `asset_path` and `asset_exists?` to the global
   helpers. They read the settings on each call, so a later `set :assets_digest, true` takes effect.
 - `asset_path` gives the manifest's digest path when digests are on and the manifest has the asset, or else the logical
@@ -296,7 +296,7 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
 - With `serve` (the default unless `digest`), it defines a `get "#{prefix}/*"` route that hands the request to the
   Sprockets environment, as Sinatra apps do. Being a route, it keeps Sinatra's semantics: routes defined before it
   under the prefix answer first, filters run, and a missing asset gets Sprockets' own 404 (with `x-cascade: pass`).
-- `Reprise::Plugins::Sprockets::Server` is the Rack middleware form, for config.ru: it answers ahead of the app, and
+- `Reprised::Plugins::Sprockets::Server` is the Rack middleware form, for config.ru: it answers ahead of the app, and
   passes anything it has no asset for to the app.
 - It doesn't use sprockets-helpers' global configuration. Precompiling stays a Sprockets task
   (`Sprockets::Manifest#compile`), reading the app's settings.
@@ -307,10 +307,10 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
 ## 6. Gem layout
 
 ```
-reprise-router/
-  reprise-router.gemspec        # name "reprise-router"; required_ruby_version ">= 4.0"; deps: rack ~> 3.2, mustermann ~> 4.0
-  lib/reprise.rb                # require "reprise"; module Reprise
-  lib/reprise/
+reprised/
+  reprised.gemspec        # name "reprised"; required_ruby_version ">= 4.0"; deps: rack ~> 3.2, mustermann ~> 4.0
+  lib/reprised.rb                # require "reprised"; module Reprised
+  lib/reprised/
     app.rb                      # Rack entry (#call), mount, plugin, finalize!/freeze
     controller.rb               # controllers and the per-request scope
     dispatch.rb                 # the request flow: routing, filters, errors, scope hand-off
@@ -323,14 +323,14 @@ reprise-router/
     params.rb                   # indifferent params
     request.rb  response.rb     # thin Rack::Request / Rack::Response subclasses
     templates.rb                # Template (Erubi compiler), erb/partial/render/capture, lookup + cache
-    async.rb                    # Reprise.current (Fiber[]), route timeouts, Reprise::Timeout
+    async.rb                    # Reprised.current (Fiber[]), route timeouts, Reprised::Timeout
     reloader.rb                 # opt-in: reload the app's code in development (Zeitwerk, or required files)
     ractors.rb                  # App.ractorize!: make an app shareable with other Ractors
     streaming.rb                # Stream (Rack 3 streaming body), EventStream, stream/event_stream helpers
     plugins/{action_view,phlex,sprockets,open_telemetry,telemetry}.rb
     telemetry.rb  telemetry/      # opt-in: request metrics and logs, stall detector, reactor lag
-    cli.rb                      # `reprise routes`
-  exe/reprise
+    cli.rb                      # `reprised routes`
+  exe/reprised
   spec/                         # RSpec + Rack::Test; Falcon integration specs under spec/falcon
   .github/workflows/ci.yml      # lint, specs, Falcon specs under Async::Safe
   spike/                        # routing parity harness against real Sinatra apps
@@ -346,7 +346,7 @@ The target is a core under about 2,500 lines. Sinatra's `base.rb` alone is about
 **0. Spike. Done 2026-11-14.** See [spike/README.md](spike/README.md) and run it with `bundle exec rake spike`.
 - Extracted the route tables of two production Sinatra apps: about 1,150 routes and 24 filters, and about 240 routes
   and 7 filters.
-- **Differential test:** 190,845 generated requests through Sinatra 4.2.1 and Reprise. With the index matcher there
+- **Differential test:** 190,845 generated requests through Sinatra 4.2.1 and Reprised. With the index matcher there
   are **no unexplained differences** in route, params, content type, or filters run. The one intended difference is
   that a regexp filter's `params["captures"]` no longer leaks into the route after it.
 - **Routing cost with empty bodies:** ~201 µs → 16.7 µs per routed request and ~132 µs → 6.5 µs per 404 on the larger
@@ -355,16 +355,16 @@ The target is a core under about 2,500 lines. Sinatra's `base.rb` alone is about
   the index matcher.
 - Carried into phase 1: the differential harness stays as the regression suite for every routing change.
 
-**1. Core. Done 2026-11-14.** `Reprise::App` and its request scope (`Reprise::Controller`):
+**1. Core. Done 2026-11-14.** `Reprised::App` and its request scope (`Reprised::Controller`):
 - routes, filters, error handlers, `provides:`, and custom conditions
-- params (`Reprise::Params`), Request, and Response
+- params (`Reprised::Params`), Request, and Response
 - the scope helpers (`halt`, `pass`, `redirect`, `content_type`, `cache_control`, `expires`, `send_file`,
   `attachment`, `json`, `cookies`, `session`, ...)
 - Sinatra-style `set`, `configure`, `helpers`, `register`, and `use`
 - `finalize!`, which compiles everything into frozen routers
 
 There are 102 specs, ported from the Sinatra behaviors kept. The differential test now also runs at the app level:
-each table is replayed into a `Reprise::App`, and all 190,845 requests go through Rack. Status, route, params,
+each table is replayed into a `Reprised::App`, and all 190,845 requests go through Rack. Status, route, params,
 content type, and filters all match Sinatra, with no unexplained differences.
 
 A full Rack call with empty bodies costs 220 µs → 40 µs per routed request and 147 µs → 21 µs per 404 on the larger
@@ -373,11 +373,11 @@ app, and 81 µs → 23 µs on the smaller one.
 Deferred: `trailing_slash: :optional`, and `stream` (phase 4).
 
 **2. Controllers. Done 2026-11-14.**
-- `Reprise::Controller`, `mount` (and `register` for controller classes), and global and private helpers.
+- `Reprised::Controller`, `mount` (and `register` for controller classes), and global and private helpers.
 - `helper_isolation`, filters scoped to their controller, the `filter_overlap` check, and controller-first error
   handlers.
 - Conditions compiled in the app's context, and scope hand-off across controllers. The request flow moved into
-  `Reprise::Dispatch`.
+  `Reprised::Dispatch`.
 - 122 specs.
 - **Real-structure check:** a third differential level rebuilds the larger app the way it's actually organized, with
   56 mounted controllers. On all 132,570 requests, every filter difference from Sinatra is one scoping predicts: 19,470
@@ -388,27 +388,27 @@ Deferred: `trailing_slash: :optional`, and `stream` (phase 4).
 **3. Rendering. Done 2026-11-14.**
 - ERB templates, `partial`, `render`, and `capture`, plus the ActionView and Phlex (plain and `rails: true`) plugins.
 - 147 specs.
-- **All 699 of the larger app's templates compile** under Reprise with the ActionView plugin's options, in 0.22 s
+- **All 699 of the larger app's templates compile** under Reprised with the ActionView plugin's options, in 0.22 s
   (`spike/compile_views.rb`).
 - A layout + template + 20-item partial through a full Rack call costs **22.7 µs, against 81.6 µs** for Sinatra 4.2
   with Tilt.
 - Erubi became a runtime dependency. ActionView, Phlex, and phlex-rails are optional.
 
 **4. Async. Done 2026-11-14.**
-- `Reprise.current`, route timeouts, `stream`, `event_stream`, and `websocket` routes. `concurrently` was dropped in
+- `Reprised.current`, route timeouts, `stream`, `event_stream`, and `websocket` routes. `concurrently` was dropped in
   favor of async's own `Barrier`.
 - 159 specs, including Falcon integration specs. Those run against a real server: concurrent requests, Barrier tasks
-  seeing `Reprise.current`, progressive streaming, SSE, timeouts as 503 through error handlers, and WebSocket upgrade,
+  seeing `Reprised.current`, progressive streaming, SSE, timeouts as 503 through error handlers, and WebSocket upgrade,
   echo, and adapter options.
 - The whole suite passes with Async::Safe enabled, and a deliberate concurrent use of a `Dispatch` is caught.
 - CI workflow added.
 
 **5. Tooling. Done 2026-11-14.**
 - **`App.routes` and `App.filters`:** the finalized tables.
-- **`reprise routes [-r FILE] [--format table|compact] [--grep PATTERN] [APP]`** lists routes in the order they're
+- **`reprised routes [-r FILE] [--format table|compact] [--grep PATTERN] [APP]`** lists routes in the order they're
   tried, with each one's controller, `provides`, and source. `compact` prints `file:line VERB pattern` per line, for
   grep. It lists the larger app's 1,146 routes in 0.44 s.
-- **`plugin Reprise::Plugins::OpenTelemetry, skip_errors:, span_name:`** works with opentelemetry-instrumentation-rack's
+- **`plugin Reprised::Plugins::OpenTelemetry, skip_errors:, span_name:`** works with opentelemetry-instrumentation-rack's
   span. It sets `http.route`, names the span `"GET /movie/:id"` (or whatever `span_name` returns), and records a 5xx's
   exception and error status, except for `skip_errors` and their subclasses.
 - **`set :sinatra_env, true`** also sets `env["sinatra.route"]` and `env["sinatra.error"]`, for middleware written for
@@ -451,9 +451,9 @@ A bare Rack app costs 0.25 µs (5) in the same harness.
   (about 70 ns) and sharing a frozen empty body (one allocation, but it would break code appending to
   `response.body`).
 
-**Against other frameworks (2026-11-14).** `bench/frameworks` compares Reprise with Sinatra, Roda, and Hanami on six
+**Against other frameworks (2026-11-14).** `bench/frameworks` compares Reprised with Sinatra, Roda, and Hanami on six
 workloads. After a pass to close the gap with Roda:
-- Under YJIT, Reprise is 2–3× faster than Sinatra on small apps and 65–150× on many routes.
+- Under YJIT, Reprised is 2–3× faster than Sinatra on small apps and 65–150× on many routes.
 - It's 1.3–2.6× behind Roda outside templates, and fastest at ERB. Results are in `bench/frameworks/README.md`.
 - That pass worked out at `finalize!` what an app uses (`App::Runtime`), so requests skip the rest. Filters that apply
   to every request run as a plain list of blocks. The status-handler pass runs only if there are status handlers.
@@ -463,28 +463,28 @@ workloads. After a pass to close the gap with Roda:
   - two objects per request (Dispatch and the scope)
   - `catch` frames for `pass`
   - Rack::Headers' case-insensitive headers
-  - `Reprise.current`
+  - `Reprised.current`
 
-**Telemetry. Done 2026-11-14.** Opt-in (`require "reprise/telemetry"`, or `plugin Reprise::Plugins::Telemetry`): the
-generic parts of the telemetry TMDB's apps share today, reading Reprise's own env keys rather than Sinatra's.
-- **`Reprise::Telemetry::Requests`:** counts requests (`app.requests`, by method, status, status class, route pattern,
+**Telemetry. Done 2026-11-14.** Opt-in (`require "reprised/telemetry"`, or `plugin Reprised::Plugins::Telemetry`): the
+generic parts of the telemetry TMDB's apps share today, reading Reprised's own env keys rather than Sinatra's.
+- **`Reprised::Telemetry::Requests`:** counts requests (`app.requests`, by method, status, status class, route pattern,
   and the app's labels), times them (`app.request.duration`, by status class), and logs a line per request (sampled,
   except 5xx; at info, warn for a 4xx, error for a 5xx) with the query's secret-looking parameters filtered. Where the server supports `rack.response_finished`
   (Falcon does), the line is written once the response is sent, after the request's span has ended. Below the tracer it
   still carries the trace id, so the separate trace-id middleware isn't needed.
-- **`Reprise::Telemetry::StallDetector`:** a heartbeat and a watchdog thread per event loop log when the loop is blocked,
+- **`Reprised::Telemetry::StallDetector`:** a heartbeat and a watchdog thread per event loop log when the loop is blocked,
   with the requests in flight, the blocked backtrace, and RSS.
-- **`Reprise::Telemetry::ReactorLag`:** samples how late the loop resumes a timer (`reactor.lag`).
+- **`Reprised::Telemetry::ReactorLag`:** samples how late the loop resumes a timer (`reactor.lag`).
 - Per-event-loop services start with each loop's first request, so they need no post-fork hook and work in threaded
-  containers too. Metrics are no-ops until the app configures an SDK provider; `Metrics.add_views` gives it Reprise's
+  containers too. Metrics are no-ops until the app configures an SDK provider; `Metrics.add_views` gives it Reprised's
   histogram buckets, since the SDK doesn't yet apply advised boundaries.
 - Overhead under YJIT, on a hello route: 0.6 µs with metrics and logs off, about 4 µs with SDK metrics (mostly the
   SDK's own recording), and 1.3 µs more for the log line.
 - Left to the apps: exporters and providers, trace sampling, the Console-to-OpenTelemetry bridge, and
   infrastructure-specific metrics (database, pools, containers).
 
-**Reloading in development. Done 2026-11-14.** Opt-in (`require "reprise/reloader"`):
-`run Reprise::Reloader.new("App", loader:, files: [...])` in config.ru.
+**Reloading in development. Done 2026-11-14.** Opt-in (`require "reprised/reloader"`):
+`run Reprised::Reloader.new("App", loader:, files: [...])` in config.ru.
 - **What reloads:** everything the Zeitwerk loader manages, and for an app Zeitwerk doesn't load (Sinatra's classic
   layout, one class reopened across required files), its `files`: the constant is removed and the files are required
   again. `Controller.mount` accepts a controller that's already mounted in an app its constant no longer names, so a
@@ -509,7 +509,7 @@ shareable, so a Ractor server can hand one app to every worker Ractor: the contr
 [Kino](https://github.com/yaroslav/kino) and Rails' `ractorize!` share. Nothing changes for an app that doesn't call it.
 - **What it does:** compiles every route, filter, error handler, and condition block again from a
   `Ractor.shareable_proc` copy (`compile_method` remembers each block for this); freezes each setting's current value
-  and redefines its reader; moves the caches Reprise fills while serving (content types, error handler lookups,
+  and redefines its reader; moves the caches Reprised fills while serving (content types, error handler lookups,
   Negotiation's Accept caches, the template lookup) to Ractor-local storage, seeded from what boot built; builds the
   state Mustermann patterns build lazily (`param_converters`) and drops their AST caches (a WeakMap); unescapes
   captures without Mustermann's `@@uri` class variable; freezes Rack's and Mustermann's constants and Rack's
@@ -531,14 +531,14 @@ shareable, so a Ractor server can hand one app to every worker Ractor: the contr
     have the router extract every Sinatra pattern's params itself, checked by the differential;
   - use Rack's released `rack/ractorize` once it ships (expected in 3.3), and drop the Rack 3.2 shim;
   - telemetry (its metrics hold Mutexes in constants; OpenTelemetry's SDK and Console aren't Ractor-safe);
-  - streaming, timeouts, and `Reprise.current` inside a worker Ractor (Async in a Ractor is untested); WebSocket routes;
+  - streaming, timeouts, and `Reprised.current` inside a worker Ractor (Async in a Ractor is untested); WebSocket routes;
   - the ActionView and Phlex plugins;
   - a spec mode that runs the whole app suite through a worker Ractor;
   - the TMDB apps themselves: Mongoid, Redis clients, Console, OpenTelemetry, and tmdb-shared's own state.
 
 **6–7. Migrating TMDB's apps.** The smaller app goes first as the dry run. Both migrations use a codemod for
   controller declarations and mounting, the phase 0 differential test, each app's spec suite, and a shadow mode:
-  Sinatra serves the request, Reprise computes its match, and we log any disagreement before cutting over. The
+  Sinatra serves the request, Reprised computes its match, and we log any disagreement before cutting over. The
   app-specific notes are kept out of this repo.
 
 **8. Post-v1 (committed, not optional):** a native `Protocol::HTTP` adapter for Falcon-only apps that skips the Rack
@@ -548,5 +548,4 @@ shareable, so a Ractor server can hand one app to every worker Ractor: the contr
 
 ## 8. Open questions
 
-1. **The `Reprise` constant:** the unrelated `reprise` gem on RubyGems probably uses the same top-level module. It's
-   harmless unless both are loaded in one process, which is unlikely, but worth knowing before a public release.
+None at the moment. (The clash with the `reprise` gem's `require` and module was settled by renaming to Reprised.)

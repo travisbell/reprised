@@ -18,10 +18,10 @@ module OpenTelemetrySupport
 
   TRACER_MIDDLEWARE = OpenTelemetry::Instrumentation::Rack::Middlewares::Stable::TracerMiddleware
 
-  # A fresh SDK meter provider, with Reprise's views, reading into an in-memory exporter.
+  # A fresh SDK meter provider, with Reprised's views, reading into an in-memory exporter.
   def start_metrics
     @metrics = OpenTelemetry::SDK::Metrics::Export::InMemoryMetricPullExporter.new
-    provider = Reprise::Telemetry::Metrics.add_views(OpenTelemetry::SDK::Metrics::MeterProvider.new)
+    provider = Reprised::Telemetry::Metrics.add_views(OpenTelemetry::SDK::Metrics::MeterProvider.new)
     provider.add_metric_reader(@metrics)
     OpenTelemetry.meter_provider = provider
   end

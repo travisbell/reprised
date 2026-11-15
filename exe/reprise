@@ -1,7 +1,0 @@
-#!/usr/bin/env ruby
-# frozen_string_literal: true
-
-require "reprise"
-require "reprise/cli"
-
-exit(Reprise::CLI.start)

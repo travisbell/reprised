@@ -19,7 +19,7 @@ Bundler.require(:default, :sinatra)
 require "sinatra/base"
 require "json"
 
-module RepriseExtract
+module ReprisedExtract
   ROOT = Dir.pwd + "/"
 
   class << self
@@ -27,7 +27,7 @@ module RepriseExtract
 
     def record(app, type, verb, path, options, block)
       # Sinatra's `get` defines a HEAD route right after each GET one (Sinatra::MultiRoute's `route :get` doesn't).
-      # Reprise's `get` does the same, so that's recorded as the GET route's head: true, not as a route of its own.
+      # Reprised's `get` does the same, so that's recorded as the GET route's head: true, not as a route of its own.
       last = records.last
       if verb == "HEAD" && last && last[:verb] == "GET" && last[:app] == app.name && last[:path] == serialize_path(path)
         last[:head] = true
@@ -70,18 +70,18 @@ module RepriseExtract
 
   module Hook
     def route(verb, path, options = {}, &block)
-      RepriseExtract.record(self, "route", verb, path, options.dup, block)
+      ReprisedExtract.record(self, "route", verb, path, options.dup, block)
       super
     end
 
     def add_filter(type, path = /.*/, **options, &block)
-      RepriseExtract.record(self, type.to_s, nil, path, options.dup, block)
+      ReprisedExtract.record(self, type.to_s, nil, path, options.dup, block)
       super
     end
   end
 end
 
-Sinatra::Base.singleton_class.prepend(RepriseExtract::Hook)
+Sinatra::Base.singleton_class.prepend(ReprisedExtract::Hook)
 
 app = case kind
 when "tmdb-web"
@@ -95,8 +95,8 @@ else
   abort("unknown app #{kind}")
 end
 
-records = RepriseExtract.records.select { it[:app] == app.name }
-# An app that's moved to Reprise defines no Sinatra routes: don't overwrite a table with an empty one.
+records = ReprisedExtract.records.select { it[:app] == app.name }
+# An app that's moved to Reprised defines no Sinatra routes: don't overwrite a table with an empty one.
 abort("#{kind}: #{app} defines no Sinatra routes; extract from a checkout that's still on Sinatra") if records.none? { it[:type] == "route" }
 
 File.write(out, JSON.pretty_generate({

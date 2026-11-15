@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Reprise's cost per request, end to end through Rack, on workloads that each stress one part of it. Reports time and
+# Reprised's cost per request, end to end through Rack, on workloads that each stress one part of it. Reports time and
 # object allocations per request.
 #
 #   bundle exec ruby bench/perf.rb                 # interpreter
@@ -11,7 +11,7 @@
 
 require "bundler/setup"
 require "rack/mock"
-require_relative "../lib/reprise"
+require_relative "../lib/reprised"
 require "rack/head"
 
 module Bench
@@ -28,12 +28,12 @@ module Bench
   JSON_ACCEPT = "application/json, text/javascript, */*; q=0.01"
   BROWSER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
 
-  class Hello < Reprise::App
+  class Hello < Reprised::App
     set :environment, :production
     get("/") { "hi" }
   end
 
-  class Api < Reprise::App
+  class Api < Reprised::App
     set :environment, :production
     before { @user = request.env["HTTP_AUTHORIZATION"] }
     after { response["x-served-by"] = "bench" }
@@ -41,33 +41,33 @@ module Bench
     get("/3/movie/:id") { "html" }
   end
 
-  class MovieController < Reprise::Controller
+  class MovieController < Reprised::Controller
     before("/movie/:id/*") { @movie_id = params[:id] }
     get("/movie/:id/cast") { "cast of #{@movie_id} #{title}" }
 
     private def title = "Fight Club"
   end
 
-  class PersonController < Reprise::Controller
+  class PersonController < Reprised::Controller
     before("/person/*") { @person = true }
     get("/person/:id") { "person" }
   end
 
-  class Controllers < Reprise::App
+  class Controllers < Reprised::App
     set :environment, :production
     set :filter_overlap, :ignore
     before { @global = true }
     mount MovieController, PersonController
   end
 
-  class Rendered < Reprise::App
+  class Rendered < Reprised::App
     set :environment, :production
     set :views, VIEWS
     helpers { def movie_title = "Fight Club" }
     get("/") { erb :"movie/show", layout: :"layouts/main", locals: { title: "Movie", cast: Array.new(20) { "Actor #{it}" } } }
   end
 
-  # A bare Rack app behind Rack::Head, as Reprise's stack ends: everything above this is Reprise's own cost (the
+  # A bare Rack app behind Rack::Head, as Reprised's stack ends: everything above this is Reprised's own cost (the
   # harness copies each request's env, as a server builds one).
   FLOOR = Rack::Head.new(->(_env) { [200, { "content-type" => "text/html;charset=utf-8", "content-length" => "2" }, ["hi"]] })
 

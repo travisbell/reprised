@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Compares Reprise with Sinatra, Roda, and Hanami (hanami-router with Hanami::Action) on the same workloads, each written
+# Compares Reprised with Sinatra, Roda, and Hanami (hanami-router with Hanami::Action) on the same workloads, each written
 # the way that framework is meant to be used. Every app is checked to give the expected response before it's measured.
 #
 #   cd bench/frameworks && bundle install
@@ -13,7 +13,7 @@
 require "bundler/setup"
 require "json"
 require "rack/mock"
-require "reprise"
+require "reprised"
 require "sinatra/base"
 require "roda"
 require "hanami/router"
@@ -23,10 +23,10 @@ VIEWS = File.expand_path("../../spec/fixtures/views", __dir__)
 RESOURCES = 500
 CAST = Array.new(20) { "Actor #{it}" }.freeze
 
-# -- Reprise ------------------------------------------------------------------------------------------------------------
+# -- Reprised ------------------------------------------------------------------------------------------------------------
 
-module RepriseApps
-  def self.app(&) = Class.new(Reprise::App) { set :environment, :production }.tap { it.class_eval(&) }.tap(&:finalize!)
+module ReprisedApps
+  def self.app(&) = Class.new(Reprised::App) { set :environment, :production }.tap { it.class_eval(&) }.tap(&:finalize!)
 
   HELLO = app { get("/") { "Hello World" } }
   PARAMS = app { get("/users/:id") { |id| json(id:, fields: params[:fields]) } }
@@ -202,7 +202,7 @@ WORKLOADS = {
   "erb" => [[env("/")], ->(_) { [200, nil] }, :ERB]
 }.freeze
 
-FRAMEWORKS = { "reprise" => RepriseApps, "sinatra" => SinatraApps, "roda" => RodaApps, "hanami" => HanamiApps }.freeze
+FRAMEWORKS = { "reprised" => ReprisedApps, "sinatra" => SinatraApps, "roda" => RodaApps, "hanami" => HanamiApps }.freeze
 
 def body_of(response)
   body = +""
@@ -261,7 +261,7 @@ end
 
 names = ARGV.empty? ? WORKLOADS.keys : WORKLOADS.keys.select { |name| ARGV.any? { name.start_with?(it) } }
 jit = defined?(RubyVM::YJIT) && RubyVM::YJIT.enabled? ? "YJIT" : "interpreter"
-versions = { "reprise" => Reprise::VERSION, "sinatra" => Sinatra::VERSION, "roda" => Roda::RodaVersion,
+versions = { "reprised" => Reprised::VERSION, "sinatra" => Sinatra::VERSION, "roda" => Roda::RodaVersion,
              "hanami" => "router #{Gem.loaded_specs["hanami-router"].version}, controller #{Gem.loaded_specs["hanami-controller"].version}" }
 puts "Ruby #{RUBY_VERSION}, #{jit}. #{versions.map { "#{_1} #{_2}" }.join("; ")}"
 puts
