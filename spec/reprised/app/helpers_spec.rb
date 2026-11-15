@@ -208,6 +208,19 @@ RSpec.describe "Helpers" do
     expect([status, body]).to eq([404, "gone"])
   end
 
+  it "has Rack::Utils' functions, as Sinatra::Base does, in routes, controllers, and templates" do
+    movies = Class.new(Reprised::Controller) { get("/movies") { erb "<%= escape_html(params[:q]) %>|<%= build_query(q: params[:q]) %>" } }
+    mock_app do
+      mount movies
+      get("/") { "#{escape("a b")} #{unescape("a%20b")} #{respond_to?(:escape_html)}" }
+    end
+
+    get "/"
+    expect(body).to eq("a+b a b false")
+    get "/movies", q: "<Fight & Club>"
+    expect(body).to eq("&lt;Fight &amp; Club&gt;|q=%3CFight+%26+Club%3E")
+  end
+
   it "reads the Rack session" do
     mock_app { get("/") { session[:user].to_s } }
 

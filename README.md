@@ -222,6 +222,9 @@ A query or body that can't be parsed answers 400 (`Reprised::BadRequest`).
 | `logger` | `env["rack.logger"]` |
 | `response` | the `Reprised::Response` (a `Rack::Response`) |
 
+As in Sinatra, `Rack::Utils`' functions (`escape_html`, `escape`, `unescape`, `build_query`, `parse_query`, ...) are
+there too, as private methods.
+
 **Cookies:** `cookies` reads the request's cookies and sets new ones, as sinatra-contrib's does:
 
 ```ruby

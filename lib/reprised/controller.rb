@@ -29,6 +29,9 @@ module Reprised
     NO_HANDLERS = [].freeze
 
     extend DSL
+    # Rack::Utils' functions (escape_html, escape, unescape, build_query, ...) in routes, filters, and templates, as
+    # Sinatra::Base includes them. They're private, and the helpers below (and the app's) take precedence.
+    include Rack::Utils
     include Helpers
     include Templates
     include Template::Methods
