@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "uri"
+
 module Reprised
   # Handles one request for an app.
   #
@@ -38,6 +40,7 @@ module Reprised
       @scope = app.new(env)
       @route = nil
       @filtered = false
+      @static = false
       # The controllers whose filters run for this request: each one a matched route belonged to.
       @filter_owners = []
       @pinned_content_type = false
@@ -94,13 +97,20 @@ module Reprised
         request.GET
       end
       request_params&.each { |key, value| params[key] = value.is_a?(String) ? force_encoding(value) : value }
+      if @runtime.public_folder && (env["REQUEST_METHOD"] == "GET" || env["REQUEST_METHOD"] == "HEAD") && (file = static_file)
+        @static = true
+        return invoke { static!(file) }
+      end
       invoke { route! }
     rescue ::Exception => e # Every error, not just StandardError, goes through the error handlers, as in Sinatra.
       invoke { handle_exception!(e) }
     ensure
       begin
-        # A halt from an after filter applies too, so they run in invoke (when there are any).
-        if (filters = @runtime.after)
+        # A halt from an after filter applies too, so they run in invoke (when there are any). A public file skips
+        # them, as it skipped the before filters.
+        if @static
+          nil
+        elsif (filters = @runtime.after)
           invoke { run_unconditional(filters) } unless filters.empty?
         else
           invoke { filter!(:after) }
@@ -123,7 +133,7 @@ module Reprised
 
           matched(route)
           if !@filtered
-            before_filters!
+            matched_before_filters!
           elsif !(route.owner <= App) && !@filter_owners.include?(route.owner)
             controller_filters!(route.owner)
           end
@@ -151,6 +161,26 @@ module Reprised
     end
 
     def path = env["PATH_INFO"].to_s
+
+    # The file in the public folder the path names, as Sinatra finds it: unescaped, with no null bytes, and inside the
+    # folder.
+    def static_file
+      folder = @runtime.public_folder
+      file = "#{folder}#{URI::RFC2396_PARSER.unescape(path)}"
+      return unless Rack::Utils.valid_path?(file)
+
+      file = File.expand_path(file)
+      file if file.start_with?("#{folder}/") && File.file?(file)
+    end
+
+    # Serves a public file, before any filter runs, with the static_cache_control and static_headers settings.
+    def static!(file)
+      env["reprised.static_file"] = file
+      env["sinatra.static_file"] = file if @runtime.sinatra_env
+      scope.cache_control(*@runtime.static_cache_control) if @runtime.static_cache_control
+      scope.headers(@runtime.static_headers) unless @runtime.static_headers.empty?
+      scope.send_file(file, disposition: nil)
+    end
 
     def matched(route)
       @route = route
@@ -185,6 +215,17 @@ module Reprised
       content_type_before = response["content-type"]
       filters ? run_unconditional(filters) : filter!(:before)
       @pinned_content_type = response["content-type"] != content_type_before
+    end
+
+    # The before filters, for the route just matched. Sinatra runs them before matching, so a content type the route's
+    # conditions chose (provides:) isn't set while they run: it's put back after, unless a filter set one. A filter that
+    # halts leaves the response without it, as in Sinatra.
+    def matched_before_filters!
+      return before_filters! unless (chosen = response["content-type"])
+
+      response.delete_header("content-type")
+      before_filters!
+      response["content-type"] ||= chosen
     end
 
     # Runs +owner+'s before filters, for a route of another controller than the one whose filters have run (as after

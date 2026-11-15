@@ -18,13 +18,39 @@ RSpec.describe "Templates" do
     expect(body).to eq("Hello Ana!\n")
   end
 
-  it "renders a template outside the views directory by a relative name, as Sinatra does" do
-    app_with_views(views) { get("/") { erb :"../implicit_layout/views/page" } }
+  it "gives templates their locals as a Hash named locals, as Tilt does, even with a local named locals" do
+    mock_app do
+      get("/") { erb "<%= locals.keys.inspect %> <%= locals[:title] %> <%= title %>", locals: { title: "Ana" } }
+      get("/shadowed") { erb "<%= title %> <%= locals.inspect %>", locals: { locals: "own", title: "Ana" } }
+    end
 
     get "/"
-
-    expect(status).to eq(200)
+    expect(body).to eq("[:title] Ana Ana")
+    get "/shadowed"
+    expect(body).to eq(%(Ana "own"))
   end
+
+  it "resolves constants in templates in the app and its helpers, as Tilt does in Sinatra's app class" do
+    site = Module.new { const_set(:MOBILE_CSS, { "page.css" => "page.mobile.css" }) }
+    movies = Class.new(Reprised::Controller) { get("/movie") { erb "<%= MOBILE_CSS['page.css'] %> <%= TITLE %>" } }
+    mock_app do
+      const_set(:TITLE, "Fight Club")
+      helpers site
+      mount movies
+    end
+
+    get "/movie"
+
+    expect(body).to eq("page.mobile.css Fight Club")
+  end
+
+  it "renders a template outside the views directory by a relative name, as Sinatra does" do
+      app_with_views(views) { get("/") { erb :"../implicit_layout/views/page" } }
+
+      get "/"
+
+      expect(status).to eq(200)
+    end
 
   it "renders a layout around it, with the template's locals" do
     app_with_views(views) { get("/") { erb :hello, layout: :"layouts/main", locals: { name: "Ana", title: "Greeting" } } }

@@ -16,7 +16,9 @@ module Reprised
     #     digest: production?
     #
     # It sets +assets+, +assets_prefix+, +assets_manifest+, and +assets_digest+, which the helpers read on each call, so
-    # a later `set :assets_digest, true` (in a `configure` block, say) takes effect.
+    # a later `set :assets_digest, true` (in a `configure` block, say) takes effect. The assets get the same
+    # `asset_path` (and Sprockets' `image_path`, `font_path`, and the rest), for an ERB stylesheet's
+    # `url(<%= asset_path("logo.svg") %>)`.
     #
     # With +serve+ (the default unless +digest+), it defines a `get "#{prefix}/*"` route that compiles assets on demand,
     # as Sinatra apps do. It takes its place among the app's routes, so routes defined before the plugin under the prefix
@@ -33,6 +35,7 @@ module Reprised
         app.set(:assets_manifest, manifest)
         app.set(:assets_digest, digest)
         app.helpers(Helpers)
+        Context.install(environment, app)
         return unless serve
 
         app.get("#{prefix}/*") do
@@ -60,6 +63,33 @@ module Reprised
 
         def digest_path(source)
           settings.assets_manifest&.assets&.[](source) if settings.assets_digest
+        end
+      end
+
+      # asset_path for the assets themselves, which Sprockets leaves to the app: the digest path when +assets_digest+ is
+      # set, or else the logical path, under the prefix, as the helpers give. It links the asset, so compiling a manifest
+      # writes it too, and the asset using it recompiles when it changes, or when the prefix or +assets_digest+ does. A
+      # path Sprockets has no asset for is left under the root (the public folder), and a URL as it is.
+      module Context
+        DEPENDENCY = "reprised-sprockets:paths"
+        EXTERNAL = %r{\A(?:[a-z][a-z0-9+.-]*:|//)}i
+
+        def self.install(environment, app)
+          environment.register_dependency_resolver("reprised-sprockets") do
+            [app.settings.assets_prefix, app.settings.assets_digest]
+          end
+          environment.context_class.include(self)
+          environment.context_class.define_method(:assets_settings) { app.settings }
+        end
+
+        def asset_path(path, _options = {})
+          return path if EXTERNAL.match?(path)
+
+          @dependencies << DEPENDENCY
+          return File.join("/", path) unless environment.resolve(path, base_path: @dirname).first
+
+          asset = link_asset(path)
+          "#{assets_settings.assets_prefix}/#{assets_settings.assets_digest ? asset.digest_path : asset.logical_path}"
         end
       end
 

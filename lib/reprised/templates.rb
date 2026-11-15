@@ -27,8 +27,10 @@ module Reprised
 
     attr_reader :path, :line, :mtime
 
-    # +source+ is the template; +path+ and +line+ are where it came from, for backtraces.
-    def initialize(source, path:, line: 1, options: {}, mtime: nil)
+    # +source+ is the template; +path+ and +line+ are where it came from, for backtraces. Constants in the template
+    # resolve in +constant_scope+ (the app) and its ancestors, its helpers among them, as Tilt's resolve in the scope's
+    # class.
+    def initialize(source, path:, line: 1, options: {}, mtime: nil, constant_scope: nil)
       options = DEFAULTS.merge(options)
       @bufvar = options.delete(:outvar) if options.key?(:outvar) && !options.key?(:bufvar)
       @bufvar ||= options[:bufvar]
@@ -37,6 +39,7 @@ module Reprised
       @path = path
       @line = line
       @mtime = mtime
+      @constant_scope = constant_scope
       @methods = {}
     end
 
@@ -75,18 +78,26 @@ module Reprised
       end
     end
 
+    # The locals Hash is the method's +locals+ argument, as in Tilt, so templates can read it whole (`locals[:title]`,
+    # `locals.key?(:title)`). A local itself named +locals+ is assigned last, so the others still read the argument.
     def define_template_method(keys, name)
+      keys = keys.partition { it.to_s != "locals" }.flatten(1)
       assignments = keys.map do |key|
         raise ArgumentError, "#{key.inspect} isn't a valid local variable name (in #{path})" unless LOCAL_NAME.match?(key.to_s)
 
-        "#{key} = __locals[#{key.inspect}];"
+        "#{key} = locals[#{key.inspect}];"
       end.join
       buffer = @bufvar.start_with?("@") ? @bufvar : nil
-      source = +"def #{name}(__locals);#{assignments}"
+      source = +"def #{name}(locals);#{assignments}"
       source << "__previous_buffer = #{buffer};" if buffer
       source << "begin;" << @ruby << "\nensure;#{"#{buffer} = __previous_buffer;" if buffer}end;end"
-      # On the template's first line, so template line numbers stay right in backtraces.
-      Methods.module_eval(source, path, line)
+      # On the template's first line, so template line numbers stay right in backtraces. With a constant scope, the
+      # method is still defined in Methods, but compiled in the scope's class body, which is where constants resolve.
+      if @constant_scope
+        @constant_scope.class_eval("::Reprised::Template::Methods.module_eval do #{source} end", path, line)
+      else
+        Methods.module_eval(source, path, line)
+      end
       method = Methods.instance_method(name)
       Methods.remove_method(name)
       method
@@ -288,7 +299,7 @@ module Reprised
       def compile_template(data, engine_options, views, eat_errors:)
         case data
         when Symbol then file_template(data, engine_options, views, eat_errors:)
-        when String then Template.new(data, path: "(inline template)", options: engine_options)
+        when String then Template.new(data, path: "(inline template)", options: engine_options, constant_scope: self)
         else raise ArgumentError, "can't render #{data.inspect}; pass a template name (Symbol) or source (String)"
         end
       end
@@ -300,7 +311,7 @@ module Reprised
         throw(:layout_missing) if eat_errors && !File.exist?(path)
 
         source = File.read(path, mode: "rb").force_encoding(settings.default_encoding)
-        Template.new(source, path:, options: engine_options, mtime: File.mtime(path))
+        Template.new(source, path:, options: engine_options, mtime: File.mtime(path), constant_scope: self)
       end
 
       def stale?(template) = template.mtime && File.exist?(template.path) && File.mtime(template.path) != template.mtime

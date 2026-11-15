@@ -38,7 +38,7 @@ module Reprised
     #                                                      are Procs by default, evaluated on every read).
     Runtime = Data.define(
       :before, :after, :status_handlers, :sinatra_env, :scope_classes,
-      :use_code, :dump_errors, :x_cascade, :raise_errors
+      :use_code, :dump_errors, :x_cascade, :raise_errors, :public_folder, :static_cache_control, :static_headers
     )
 
     FINALIZE_LOCK = Mutex.new
@@ -210,7 +210,10 @@ module Reprised
           sinatra_env: settings.sinatra_env ? true : false,
           scope_classes: @routes.to_h { [it.owner, it.owner <= App ? self : it.owner] }.compare_by_identity.freeze,
           use_code: settings.use_code? ? true : false, dump_errors: settings.dump_errors? ? true : false,
-          x_cascade: settings.x_cascade? ? true : false, raise_errors: settings.raise_errors? ? true : false
+          x_cascade: settings.x_cascade? ? true : false, raise_errors: settings.raise_errors? ? true : false,
+          # Worked out once, at boot, rather than checking the folder exists on each request as Sinatra does.
+          public_folder: settings.static? && settings.public_folder ? File.expand_path(settings.public_folder).freeze : nil,
+          static_cache_control: settings.static_cache_control || nil, static_headers: settings.static_headers || {}
         )
       end
 
@@ -296,6 +299,11 @@ module Reprised
     set :default_content_type, "text/html"
     set :add_charset, ["application/javascript", "application/xml", "application/xhtml+xml", %r{^text/}]
     set :absolute_redirects, true
+    # Files in the public folder are served ahead of the routes, for GET and HEAD, as in Sinatra.
+    set :public_folder, proc { root && File.join(root, "public") }
+    set :static, proc { public_folder && File.exist?(public_folder) }
+    set :static_cache_control, false
+    set :static_headers, {}
     set :prefixed_redirects, false
     set :mustermann_opts, {}
     set :matcher, :index

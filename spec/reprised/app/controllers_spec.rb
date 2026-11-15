@@ -26,14 +26,39 @@ RSpec.describe "Controllers" do
     expect(body).to eq("controller")
   end
 
-  it "mounts with register, as Sinatra extensions are" do
-    movies = controller { get("/movies") { "movies" } }
-    mock_app { register movies }
+  it "gives the app and its controllers the class methods a helper module adds to whatever includes it" do
+    require "active_support/concern"
+    concern = Module.new do
+      extend ActiveSupport::Concern
+      class_methods { def sanitizer = "concern" }
+      def sanitized = self.class.sanitizer
+    end
+    hooked = Module.new do
+      def self.included(base) = base.extend(Module.new { def hooked = "hook" })
+      def hook = self.class.hooked
+    end
+    movies = Class.new(Reprised::Controller) { get("/movie") { "#{sanitized} #{hook}" } }
+    mock_app do
+      helpers { include concern }
+      mount movies
+      helpers hooked
+      get("/") { "#{sanitized} #{hook}" }
+    end
 
-    get "/movies"
-
-    expect(body).to eq("movies")
+    get "/"
+    expect(body).to eq("concern hook")
+    get "/movie"
+    expect(body).to eq("concern hook")
   end
+
+  it "mounts with register, as Sinatra extensions are" do
+      movies = controller { get("/movies") { "movies" } }
+      mock_app { register movies }
+
+      get "/movies"
+
+      expect(body).to eq("movies")
+    end
 
   describe "helpers" do
     let(:movies) do

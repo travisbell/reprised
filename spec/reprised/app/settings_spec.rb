@@ -89,6 +89,46 @@ RSpec.describe "Settings and app definition" do
     expect(app.extensions).to eq([extension])
   end
 
+  it "replays an extension's DSL calls on each app that registers it, as Sinatra::Extension does" do
+    extension = Module.new do
+      extend Reprised::Extension
+
+      def only_json(*) = condition { request.preferred_type.to_s == "application/json" }
+
+      helpers { def label = "extended" }
+      before("/filtered") { @filtered = "yes" }
+      get("/json", only_json: true) { "json #{label}" }
+      get("/filtered") { "filtered #{@filtered}" }
+      get("/missing", provides: :json) { halt 404 }
+      error(404) { "not here" }
+      configure(:test) { set :from_extension, environment }
+      configure(:production) { set :from_extension, :production }
+    end
+    first = mock_app { register extension }
+    second = mock_app { register extension }
+
+    expect(first.from_extension).to eq(:test)
+    expect(second.routes.size).to eq(first.routes.size)
+
+    get "/json", {}, { "HTTP_ACCEPT" => "application/json" }
+    expect(body).to eq("json extended")
+    get "/filtered"
+    expect(body).to eq("filtered yes")
+    get "/missing", {}, { "HTTP_ACCEPT" => "application/json" }
+    expect([status, body]).to eq([404, "not here"])
+  end
+
+  it "says when a recorded call's result is used in an extension" do
+    recording = Module.new { extend Reprised::Extension }
+    expect { recording.module_eval { settings.views } }
+      .to raise_error(NoMethodError, "the result of settings isn't available in an extension")
+  end
+
+  it "lists the media types a name stands for, as Sinatra::Base.mime_types does" do
+    expect(Reprised::App.mime_types(:json)).to eq(["application/json"])
+    expect(Reprised::App.mime_types("js")).to eq(["text/javascript", "application/javascript"])
+  end
+
   it "wraps the app in middleware, outermost first" do
     tagger = Class.new do
       def initialize(app, tag, suffix: "") = (@app, @tag = app, "#{tag}#{suffix}")

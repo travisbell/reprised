@@ -12,8 +12,8 @@ module Reprised
     # Sinatra settings Reprised doesn't act on: each belongs in config.ru middleware or is gone. Setting one warns.
     IGNORED_SETTINGS = [
       :app_file, :bind, :empty_path_info, :host_authorization, :lock, :logging, :method_override, :port, :protection,
-      :public_dir, :public_folder, :quiet, :run, :server, :session_secret, :session_store,
-      :sessions, :show_exceptions, :static, :static_cache_control, :static_headers, :strict_paths, :threaded, :traps
+      :public_dir, :quiet, :run, :server, :session_secret, :session_store,
+      :sessions, :show_exceptions, :strict_paths, :threaded, :traps
     ].freeze
 
     # The blocks compiled methods were defined from, by method (held only as long as the method is).
@@ -192,6 +192,9 @@ module Reprised
       Rack::Mime::MIME_TYPES[type] = value
     end
 
+    # Every media type +type+ names, as Sinatra::Base.mime_types: `mime_types(:json)` is `["application/json"]`.
+    def mime_types(type) = Negotiation.mime_types(type)
+
     # -- Helpers, extensions, middleware --------------------------------------------------------------------------
 
     # Adds methods to routes, filters, and templates: the block's methods, and the given modules'. An app's helpers
@@ -206,9 +209,34 @@ module Reprised
     def helpers_module
       @helpers_module ||= Module.new.tap do |mod|
         owner = self
+        mod.extend(HelpersModule)
         mod.define_singleton_method(:inspect) { "#{owner}::Helpers" }
         include(mod)
       end
+    end
+
+    # What a helpers module does besides hold methods. In Sinatra, `helpers` includes modules into the app class
+    # itself, so one that also adds class methods to whatever includes it (ActiveSupport::Concern's ClassMethods, as
+    # ActionView's SanitizeHelper has, or `def self.included(base) = base.extend(...)`) gives them to the app. Here they
+    # land on the helpers module, which passes them on to the classes, and helpers modules, that include it.
+    module HelpersModule
+      def extend(*modules)
+        super
+        class_extensions.concat(modules)
+        includers.each { it.extend(*modules) }
+        self
+      end
+
+      def included(base)
+        super
+        includers << base
+        base.extend(*class_extensions) unless class_extensions.empty?
+      end
+
+      private
+
+      def class_extensions = @class_extensions ||= []
+      def includers = @includers ||= []
     end
 
     # Registers a Sinatra-style extension: a module extending the app, with an optional `registered(app)` hook. A

@@ -17,6 +17,7 @@ require_relative "reprised/dsl"
 require_relative "reprised/controller"
 require_relative "reprised/dispatch"
 require_relative "reprised/app"
+require_relative "reprised/extension"
 
 # A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed for Falcon and Async.
 module Reprised

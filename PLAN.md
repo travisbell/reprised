@@ -300,6 +300,11 @@ Static files, protection, sessions, and the dev error page belong in `config.ru`
   passes anything it has no asset for to the app.
 - It doesn't use sprockets-helpers' global configuration. Precompiling stays a Sprockets task
   (`Sprockets::Manifest#compile`), reading the app's settings.
+- It gives the assets themselves `asset_path` (which Sprockets leaves to the app, and sprockets-helpers used to add):
+  the digest path when digests are on, or else the logical path, for ERB stylesheets' `url(...)`s. It links the asset,
+  so a manifest compile writes it, and registers a dependency on the prefix and digest settings, so a cached stylesheet
+  recompiles when they change. On the larger app, its stylesheets compile byte for byte as under sprockets-helpers, with
+  and without digests, and a full manifest compile writes the same 7,072 files.
 - Checked on the larger app's real asset tree in development: 8,456 asset paths, each with GET, HEAD, and a conditional
   GET (23,985 requests), give the same status, headers, and body as under Sinatra, apart from two malformed paths (a
   `..` traversal, which Sprockets refuses with a 403, and a null byte, a 500 in both) whose error responses differ.
@@ -540,6 +545,21 @@ shareable, so a Ractor server can hand one app to every worker Ractor: the contr
   controller declarations and mounting, the phase 0 differential test, each app's spec suite, and a shadow mode:
   Sinatra serves the request, Reprised computes its match, and we log any disagreement before cutting over. The
   app-specific notes are kept out of this repo.
+
+  Both apps have migration branches (2026-11-15) whose spec suites pass as they do on Sinatra, and a replay of each
+  app's sampled requests through the real app, under Sinatra and under Reprised, differs only where scoping says it
+  should (controller filters on paths with no route) and in data that changes from run to run. The larger app found
+  these gaps, now closed: `Reprised::Extension` for sinatra-contrib's `Sinatra::Extension`; `App.mime_types`; the
+  public folder served as Sinatra serves it; `locals` in templates, and template constants resolved in the app class;
+  Accept entries answering String's methods; helper modules' class methods (ActiveSupport::Concern's `ClassMethods`)
+  reaching the app and its controllers; and the content type `provides:` chooses set after the before filters, as in
+  Sinatra.
+
+  The larger app has since moved from Sinatra compatibility to Reprised's own ways: helper isolation on (the helpers its
+  controllers share now in modules), the ActionView, Phlex, Sprockets, and OpenTelemetry plugins in place of its own
+  versions, its asset pipeline and error pages as plugins rather than extensions, `Reprised::Reloader` in development,
+  Reprised's stall detector, and no `sinatra_env`. Its suite and replay are unchanged by the move. It closed one more gap: the
+  Sprockets plugin's `asset_path` for the assets themselves, which sprockets-helpers had provided.
 
 **8. Post-v1 (committed, not optional):** a native `Protocol::HTTP` adapter for Falcon-only apps that skips the Rack
   env translation. Before starting it, benchmark how much of per-request time the Rack translation actually costs.

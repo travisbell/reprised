@@ -343,7 +343,18 @@ end
 ```
 
 `register` takes a Sinatra-style extension (a module, with an optional `registered(app)` hook), or a controller class,
-which it mounts.
+which it mounts. An extension written with sinatra-contrib's `Sinatra::Extension` (routes, filters, error handlers,
+and `configure` in the module's body) works with `extend Reprised::Extension` in its place: the calls are recorded and
+replayed on each app that registers it.
+
+```ruby
+module ErrorPages
+  extend Reprised::Extension
+
+  error(404) { erb :not_found }
+  configure(:production) { set :dump_errors, false }
+end
+```
 
 ## Settings
 
@@ -385,6 +396,10 @@ environment matches, at definition time, and `development?`, `production?`, and 
 | `filter_overlap` | `:warn` | what the boot-time filter check does |
 | `root` | the working directory | |
 | `views` | `root/views` | |
+| `public_folder` | `root/public` | files served ahead of the routes |
+| `static` | whether `public_folder` exists (at boot) | serve the public folder |
+| `static_cache_control` | `false` | Cache-Control for public files: `[:public, { max_age: 3600 }]` |
+| `static_headers` | `{}` | more headers for public files |
 | `erb` | `{}` | options for every `erb` call |
 | `reload_templates` | in development | recompile templates that change |
 | `precompile_templates` | outside development and test | compile every template at boot |
@@ -393,9 +408,12 @@ environment matches, at definition time, and `development?`, `production?`, and 
 | `sinatra_env` | `false` | also set `env["sinatra.route"]` and `env["sinatra.error"]` |
 | `cookie_options` | (none) | defaults for new cookies |
 
-Sinatra's server, static file, session, protection, and logging settings (`:sessions`, `:static`, `:public_folder`,
-`:protection`, `:logging`, `:port`, `:lock`, `:threaded`, and the rest) do nothing in Reprised, and warn when set: use
-Rack middleware in config.ru instead.
+**Public files:** as in Sinatra, a GET or HEAD request for a file in the public folder is answered with the file
+(`send_file`, with `static_cache_control` and `static_headers`) before any filter runs, and after filters don't run for
+it. Paths are unescaped, and must stay inside the folder. Other requests, and paths with no file, go to the routes.
+
+Sinatra's server, session, protection, and logging settings (`:sessions`, `:protection`, `:logging`, `:port`, `:lock`,
+`:threaded`, and the rest) do nothing in Reprised, and warn when set: use Rack middleware in config.ru instead.
 
 ## Templates
 
@@ -417,6 +435,8 @@ end
 - `<%= %>` doesn't escape and `<%== %>` does, as in Sinatra. For a new app, `set :erb, { escape: true }` is the safer
   default: `<%= %>` escapes, and `<%== %>` writes HTML as it is. With the ActionView plugin, helper output (an
   `html_safe` string) isn't escaped again either way, as in Rails.
+- Locals are local variables in the template, and the whole Hash is `locals` (`locals.key?(:title)`), as in Tilt.
+  Constants resolve in the app class and its ancestors, its helpers among them, as they do in Sinatra's.
 - `partial "movie/_card", movie:` renders without a layout, with locals as keywords. `render :erb, :name, options`
   is Sinatra's form. `capture { ... }` renders a block of template to a String, for helpers that take one.
 - Options per call: `layout:`, `locals:`, `views:`, `scope:`, `content_type:`, `layout_options:`, and Erubi's own.
@@ -437,10 +457,9 @@ class App < Reprised::App
 end
 ```
 
-Middleware that belongs to the whole server (static files, sessions, protection, request logging) goes in config.ru:
+Middleware that belongs to the whole server (sessions, protection, request logging) goes in config.ru:
 
 ```ruby
-use Rack::Static, urls: ["/favicon.ico"], root: "public"
 use Rack::Session::Cookie, secret: ENV.fetch("SESSION_SECRET") # the rack-session gem
 run App
 ```
@@ -556,6 +575,20 @@ A `middleware` block in the service can still wrap it with `super()`. Outside `f
 
 Plugins are optional, and load only when you use them: `plugin Reprised::Plugins::Name, **options`.
 
+A plugin is any module with `install(app, **options)`, so an app can package its own routes, settings, helpers, and
+error handlers the same way:
+
+```ruby
+module ErrorPages
+  def self.install(app)
+    app.error(404) { erb :not_found }
+    app.error(500) { erb :oops }
+  end
+end
+
+plugin ErrorPages
+```
+
 ### ActionView
 
 ActionView's helpers in ERB templates (`form_tag`, `tag.div`, `number_to_human`, ...), with block helpers capturing
@@ -610,6 +643,10 @@ plugin Reprised::Plugins::Sprockets,
 - It sets `assets`, `assets_prefix`, `assets_manifest`, and `assets_digest`, which its helpers read on each call.
 - `asset_path("site.css")` gives the manifest's digest path when digests are on, or else `/assets/site.css`.
   `asset_exists?` checks without compiling the asset.
+- Assets get `asset_path` too, and with it Sprockets' `image_path`, `font_path`, and the rest, for an ERB stylesheet's
+  `url(<%= asset_path("logo.svg") %>)`. It gives the asset's digest path when digests are on, and links the asset, so
+  compiling the manifest writes it too. A path with no asset stays under the root, and a URL as it is. This replaces
+  the sprockets-helpers gem.
 - With `serve:` (the default unless `digest:`), it defines a `get "/assets/*"` route that compiles assets on demand.
   Routes defined before the plugin under the prefix answer first, and a missing asset gets Sprockets' 404.
   `Reprised::Plugins::Sprockets::Server` is the middleware form, for config.ru, which answers ahead of the app.
@@ -744,15 +781,28 @@ Most route code moves over unchanged. What changes:
   `mount X` for an extension of routes. `register` still works, and mounts controller classes.
 - **Helpers and filters are scoped to their controller** (see [Controllers](#controllers)). `set :helper_isolation,
   false` gives Sinatra's global helpers while you migrate, and the overlap check reports filters that scoping changes.
+  To turn isolation on, run the specs with it on to find helpers one controller calls from another, and move those into
+  modules: included with `helpers SharedHelpers` by the controllers that use them, or in the app's `helpers` if every
+  controller does. Moving a `helpers do` block into a module changes how its constants resolve: constants the
+  controller defines aren't found from the module, and a module beside it can shadow a top-level class (a
+  `Helpers::Session` module for the `Session` model).
 - **Routing happens before filters.** Conditions run while routes are matched, so they don't see what filters set, and a
   controller's filters don't run on a 404.
 - **Errors:** `Reprised::NotFound` for `Sinatra::NotFound`, and `env["reprised.error"]` (or `error` in a handler) for
   `env["sinatra.error"]`. `set :sinatra_env, true` also sets `env["sinatra.route"]` and `env["sinatra.error"]` for
-  middleware written for Sinatra.
+  middleware written for Sinatra. The [OpenTelemetry](#opentelemetry) plugin replaces
+  opentelemetry-instrumentation-sinatra's tracer middleware.
 - **Multi-verb routes and `json`** are built in, replacing sinatra-contrib's MultiRoute and JSON. So are `cookies` and
-  `configure`.
-- **Settings** are methods on the app (`settings.views`). Server, static file, session, protection, and logging
-  settings are gone; use Rack middleware in config.ru.
+  `configure`, and `Reprised::Extension` stands in for sinatra-contrib's `Sinatra::Extension`. Once migrated, an
+  extension can become a [plugin](#plugins).
+- **Reloading in development:** a file watcher that only reloads Zeitwerk leaves the app's routes on the old controller
+  classes. [`Reprised::Reloader`](#reloading-in-development) reloads the app too, between requests.
+- **Settings** are methods on the app (`settings.views`). The public folder is served as in Sinatra. Server, session,
+  protection, and logging settings are gone; use Rack middleware in config.ru.
+- **Helpers' class methods:** a helper module that adds class methods to what includes it (`ActiveSupport::Concern`'s
+  `ClassMethods`) gives them to the app and its controllers, so `self.class.full_sanitizer` works in any route.
+- **Specs that stub the app's instances** (`allow_any_instance_of(App)`) need the controller instead: a controller's
+  routes run in an instance of the controller.
 - **Protection isn't on by default.** Sinatra adds `Rack::Protection` (frame options, origin checks, JSON CSRF, path
   traversal, IP spoofing, and XSS headers) unless it's disabled, and host authorization in development. Reprised doesn't.
   To keep Sinatra's defaults, add the rack-protection gem and, in config.ru:

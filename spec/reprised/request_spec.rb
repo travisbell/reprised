@@ -17,19 +17,28 @@ RSpec.describe Reprised::Request do
     end
   end
 
-  it "parses query strings as Rack does, plain ones without Rack's parser" do
-    queries = [
-      "page=2", "language=en-US&page=2", "a=1&a=2", "flag", "flag&page=2", "a=b=c", "a=&b", "&&a=1&&", "a.b=1",
-      "x~y=z", "list=1,2,3", "t=10:30", "a%20b=c", "a=b+c", "a=%E2%9C%93", "a[]=1&a[]=2", "a[b]=1", "a=1;b=2",
-      "=1", "=", "a b=1", "café=1", "#{"a=1&" * 300}b=2"
-    ]
+  it "answers String's methods with the preferred media type, as Sinatra's AcceptEntry does" do
+    preferred = described_class.new(Rack::MockRequest.env_for("/", "HTTP_ACCEPT" => "application/json;q=0.9, text/html")).preferred_type
 
-    queries.each do |query|
-      expect(query_params(query)).to eq(rack_params(query)), query.inspect
-      expect(query_params(query).map { [encodings(it[0]), encodings(it[1])] })
-        .to eq(rack_params(query).map { [encodings(it[0]), encodings(it[1])] }), query.inspect
-    end
+    expect(preferred.start_with?("text/")).to be(true)
+    expect(preferred).to respond_to(:start_with?)
+    expect("type: " + preferred).to eq("type: text/html")
+    expect { preferred.no_such_method }.to raise_error(NoMethodError)
   end
+
+  it "parses query strings as Rack does, plain ones without Rack's parser" do
+      queries = [
+        "page=2", "language=en-US&page=2", "a=1&a=2", "flag", "flag&page=2", "a=b=c", "a=&b", "&&a=1&&", "a.b=1",
+        "x~y=z", "list=1,2,3", "t=10:30", "a%20b=c", "a=b+c", "a=%E2%9C%93", "a[]=1&a[]=2", "a[b]=1", "a=1;b=2",
+        "=1", "=", "a b=1", "café=1", "#{"a=1&" * 300}b=2"
+      ]
+
+      queries.each do |query|
+        expect(query_params(query)).to eq(rack_params(query)), query.inspect
+        expect(query_params(query).map { [encodings(it[0]), encodings(it[1])] })
+          .to eq(rack_params(query).map { [encodings(it[0]), encodings(it[1])] }), query.inspect
+      end
+    end
 
   it "keeps the parsed params for later calls, as Rack does" do
     request = described_class.new(Rack::MockRequest.env_for("/?page=2"))

@@ -18,6 +18,10 @@ module Reprised
       def priority = [q, -type.count("*"), params.size]
       def to_s = type
       def to_str = type
+
+      # Like Sinatra's AcceptEntry, it answers String's methods with its media type: `preferred_type.start_with?`.
+      def method_missing(name, ...) = type.respond_to?(name) ? type.public_send(name, ...) : super
+      def respond_to_missing?(name, include_private = false) = type.respond_to?(name) || super
     end
 
     ANY = [Entry.new(type: "*/*", params: {}.freeze, q: 1.0)].freeze

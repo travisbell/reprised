@@ -12,6 +12,7 @@ RSpec.describe Reprised::Plugins::Sprockets, type: :app do
     Sprockets::Environment.new(root).tap do |environment|
       environment.append_path(File.join(root, "stylesheets"))
       environment.append_path(File.join(root, "javascripts"))
+      environment.append_path(File.join(root, "images"))
       environment.cache = nil
     end
   end
@@ -158,6 +159,44 @@ RSpec.describe Reprised::Plugins::Sprockets, type: :app do
 
       get "/controller"
       expect(body).to eq("/assets/app.js")
+    end
+  end
+
+  describe "in assets" do
+    it "link to assets as the helpers do, leaving URLs and paths with no asset alone" do
+      expect(assets["branded.css"].to_s).to eq(<<~CSS)
+        .logo { background: url(/assets/logo.svg); }
+        .icon { background: url(/assets/logo.svg); }
+        .missing { background: url(/missing.png); }
+        .cdn { background: url(https://cdn.example.org/x.png); }
+      CSS
+    end
+
+    it "link the asset, so a manifest compiles it too" do
+      Dir.mktmpdir do |public_path|
+        manifest = Sprockets::Manifest.new(assets, public_path)
+        manifest.compile("branded.css")
+
+        expect(manifest.assets.keys).to contain_exactly("branded.css", "logo.svg")
+      end
+    end
+
+    context "with digest" do
+      let(:options) { { digest: true, prefix: "/static" } }
+
+      it "link to digest paths" do
+        expect(assets["branded.css"].to_s).to include(".logo { background: url(/static/#{assets["logo.svg"].digest_path}); }")
+      end
+    end
+
+    it "recompile when the digest setting changes" do
+      Dir.mktmpdir do |cache|
+        assets.cache = Sprockets::Cache::FileStore.new(cache)
+        expect(assets["branded.css"].to_s).to include("url(/assets/logo.svg)")
+
+        app.set(:assets_digest, true)
+        expect(assets["branded.css"].to_s).to include("url(/assets/#{assets["logo.svg"].digest_path})")
+      end
     end
   end
 end

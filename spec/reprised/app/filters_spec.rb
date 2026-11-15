@@ -1,6 +1,21 @@
 # frozen_string_literal: true
 
 RSpec.describe "Filters" do
+  it "run without the content type the route's provides: chose, as Sinatra's run before matching" do
+    mock_app do
+      before("/private") { halt 401, "no" }
+      before { response["x-seen"] = content_type.inspect }
+      get("/private", provides: :json) { "{}" }
+      get("/public", provides: :json) { "{}" }
+    end
+
+    get "/private", {}, { "HTTP_ACCEPT" => "application/json" }
+    expect([status, response_headers["content-type"]]).to eq([401, "text/html;charset=utf-8"])
+
+    get "/public", {}, { "HTTP_ACCEPT" => "application/json" }
+    expect(response_headers).to include("content-type" => "application/json", "x-seen" => "nil")
+  end
+
   it "run before filters, in order, before the route" do
     mock_app do
       before { @trail = ["first"] }
