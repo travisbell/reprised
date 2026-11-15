@@ -80,7 +80,7 @@ module Reprised
           scope.instance_variable_set(:@params, route_params)
           Reprised.with_current(scope) { Action.call(handler, scope, [connection]) }
         end)
-      })
+      }, source_location: block.source_location)
     end
 
     # -- Filters --------------------------------------------------------------------------------------------------
@@ -297,7 +297,8 @@ module Reprised
 
     private
 
-    def add_route(verb, path, options, block, head: false)
+    # +source_location+ is where the route is defined: its block's, unless the block is one Reprised wraps it in.
+    def add_route(verb, path, options, block, head: false, source_location: block&.source_location)
       ensure_definable!
       raise ArgumentError, "#{verb} #{path} needs a block" unless block
 
@@ -305,8 +306,7 @@ module Reprised
       timeout = options.delete(:timeout)
       route = Route.new(
         verb:, path:, options: options.freeze, conditions: take_pending_conditions,
-        action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location: block.source_location,
-        head:
+        action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location:, head:
       )
       definitions(:routes) << route
       route

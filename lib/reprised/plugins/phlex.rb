@@ -20,11 +20,13 @@ module Reprised
     module Phlex
       module Methods
         # Renders +component+ (a Phlex component, or its class) and returns the HTML. With +layout+, the HTML is
-        # yielded to that ERB layout, which gets +locals+ (or +assigns+).
+        # yielded to that ERB layout, which gets +locals+ (or +assigns+). The HTML is html_safe when ActiveSupport is
+        # loaded (with the ActionView plugin, say), so ERB doesn't escape it when `set :erb, { escape: true }`.
         def phlex(component, layout: nil, **options)
           component = component.new if component.is_a?(Class)
           assigns = options[:assigns] || options[:locals] || {}
           output = settings.phlex_rails ? phlex_view_context(assigns).render(renderable: component) : component.call(context: { reprised: self })
+          output = output.html_safe if output.respond_to?(:html_safe)
           layout ? render(:erb, layout, { layout: false }, assigns) { output } : output
         end
 

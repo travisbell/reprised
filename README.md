@@ -621,8 +621,9 @@ end
 
 `render` takes a component too, in routes and templates (`<%= render Card.new(movie) %>`). With a layout, the ERB
 layout `yield`s the component's HTML. Components get the request scope as `context[:reprised]`, and through
-`Reprised.current`. With `rails: true` (phlex-rails and the ActionView plugin), components render through an ActionView
-view context, so phlex-rails' helper adapters work.
+`Reprised.current`. Their HTML is `html_safe` when ActiveSupport is loaded (with the ActionView plugin, say), so ERB
+doesn't escape it with `escape: true`. With `rails: true` (phlex-rails and the ActionView plugin), components render
+through an ActionView view context, so phlex-rails' helper adapters work.
 
 ### Sprockets
 

@@ -61,6 +61,21 @@ RSpec.describe Reprised::Plugins::Phlex, type: :app do
     expect(body).to eq("2")
   end
 
+  it "isn't escaped by ERB templates that escape, in render or in a layout" do
+    mock_app do
+      plugin Reprised::Plugins::ActionView
+      plugin Reprised::Plugins::Phlex
+      set :erb, { escape: true }
+      get("/erb") { erb "<%= render Greeting.new(name: name) %>|<%= name %>", locals: { name: "<Ana>" } }
+      get("/layout") { phlex Greeting.new(name: "Bo"), layout: "<main><%= yield %></main>" }
+    end
+
+    get "/erb"
+    expect(body).to eq("<h1>Hello &lt;Ana&gt;</h1><p>from /erb</p>|&lt;Ana&gt;")
+    get "/layout"
+    expect(body).to eq("<main><h1>Hello Bo</h1><p>from /layout</p></main>")
+  end
+
   it "renders through an ActionView view context with rails: true, for phlex-rails' helpers" do
     helper_component = Class.new(Phlex::HTML) do
       include Phlex::Rails::Helpers::NumberToHuman

@@ -177,6 +177,18 @@ RSpec.describe "Routing" do
     expect(body).to eq("GET /movie/:id true")
   end
 
+  it "records where each route is defined, websocket routes included" do
+    line = __LINE__ + 2
+    app = mock_app do
+      get("/movies") { "movies" }
+      websocket("/live") { |connection| connection }
+    end
+
+    expect(app.routes.map { [it.to_s, it.source_location] }).to eq([
+      ["GET /movies", [__FILE__, line]], ["GET /live", [__FILE__, line + 1]]
+    ])
+  end
+
   it "rejects unknown route options when finalized, once the app's conditions are known" do
     mock_app { get("/", nope: 1) { "" } }
 

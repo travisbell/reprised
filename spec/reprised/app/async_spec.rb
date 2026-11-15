@@ -38,6 +38,31 @@ RSpec.describe "Reprised.current and streaming" do
     expect(response_headers).not_to include("content-length")
   end
 
+  it "ends a stream's block when the client has gone, as Falcon reports it, without raising" do
+    require "protocol/http/error"
+    written = []
+    mock_app do
+      get("/events") do
+        event_stream do |sse|
+          loop do
+            sse.comment("tick")
+            written << :tick
+          end
+        ensure
+          written << :ended
+        end
+      end
+    end
+    gone = Object.new
+    gone.define_singleton_method(:write) { |_data| raise Protocol::HTTP::RemoteError, "Remote connection closed during flush!" }
+    gone.define_singleton_method(:close) { raise Protocol::HTTP::RemoteError, "Remote connection closed!" }
+
+    _status, _headers, stream = app.call(Rack::MockRequest.env_for("/events"))
+
+    expect { stream.call(gone) }.not_to raise_error
+    expect(written).to eq([:ended])
+  end
+
   it "streams Server-Sent Events" do
     mock_app do
       get("/events") do

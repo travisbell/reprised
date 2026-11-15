@@ -21,7 +21,9 @@ module Reprised
       def write(data)
         @stream.write(data.to_s)
         @stream.flush if @stream.respond_to?(:flush)
-      rescue Errno::EPIPE, Errno::ECONNRESET, IOError
+      rescue StandardError => error
+        raise unless Writer.disconnected?(error)
+
         @closed = true
         raise ClientDisconnected
       end
@@ -31,8 +33,15 @@ module Reprised
 
         @closed = true
         @stream.close
-      rescue IOError, Errno::EPIPE, Errno::ECONNRESET
-        nil
+      rescue StandardError => error
+        raise unless Writer.disconnected?(error)
+      end
+
+      # Whether +error+ says the client has gone: a closed or reset socket, or under Falcon, protocol-http's
+      # RemoteError ("Remote connection closed during flush!").
+      def self.disconnected?(error)
+        error.is_a?(IOError) || error.is_a?(Errno::EPIPE) || error.is_a?(Errno::ECONNRESET) ||
+          (defined?(::Protocol::HTTP::RemoteError) && error.is_a?(::Protocol::HTTP::RemoteError)) || false
       end
 
       def closed? = @closed

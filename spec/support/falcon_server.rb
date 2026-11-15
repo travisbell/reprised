@@ -21,7 +21,9 @@ module FalconServer
       endpoint = Async::HTTP::Endpoint.parse("http://127.0.0.1:0")
       bound = endpoint.bound
       port = bound.sockets.first.local_address.ip_port
-      server = Falcon::Server.new(Falcon::Server.protocol_middleware(adapter.new(app)), bound, protocol: endpoint.protocol, scheme: endpoint.scheme)
+      # Without the response cache, as `falcon serve` and `falcon host` run by default.
+      middleware = Falcon::Server.protocol_middleware(adapter.new(app), cache: false)
+      server = Falcon::Server.new(middleware, bound, protocol: endpoint.protocol, scheme: endpoint.scheme)
       server_task = task.async { server.run }
 
       url = "http://127.0.0.1:#{port}"
