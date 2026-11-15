@@ -139,7 +139,9 @@ end
 - There is one filter list, kept in definition order, as in Sinatra. Each filter records its owner (App or a
   controller).
 - **Routing happens first, then filters.** A filter runs if its owner is the App or the matched route's controller,
-  and its pattern matches. Definition order across App and controller filters is preserved exactly. `route` (the
+  and its pattern matches. A route reached by `pass` from another controller's route runs its own controller's before
+  filters first (not the app's again), and after filters run for every controller whose before filters ran, so a
+  `pass` can't skip a controller's filters. Definition order across App and controller filters is preserved exactly. `route` (the
   matched `Reprise::Route`) is available inside `before` filters.
 - When no route matches, only App filters run. A controller filter no longer runs on a 404 path that happens to match
   its pattern (`before "/teams/*"` on `/teams/nope`). Global filters still run, so error pages get whatever the app's

@@ -66,6 +66,15 @@ RSpec.describe Reprise::Telemetry do
       expect(filter.call(query, max_length: 10)).to eq("api_key=[F")
     end
 
+    it "filters the other common names for keys and credentials" do
+      query = "apikey=1&apiKey=2&authorization=3&jwt=4&signature=5&pwd=6&page=2&language=en"
+
+      expect(filter.call(query, max_length: 500)).to eq(
+        "apikey=[FILTERED]&apiKey=[FILTERED]&authorization=[FILTERED]&jwt=[FILTERED]&signature=[FILTERED]&pwd=[FILTERED]" \
+        "&page=2&language=en"
+      )
+    end
+
     it "takes the names to filter" do
       expect(described_class.new(["pin"]).call("pin=1234&api_key=abc", max_length: 100)).to eq("pin=[FILTERED]&api_key=abc")
     end
@@ -164,6 +173,12 @@ RSpec.describe Reprise::Telemetry do
 
         expect(counted.sum(&:value)).to eq(1)
       end
+    end
+
+    it "cuts a long request id to length" do
+      app.call(env_for("/movie/550", "HTTP_X_REQUEST_ID" => "x" * 5_000))
+
+      expect(lines.sole.last[:request_id].size).to eq(described_class::MAX_REQUEST_ID_LENGTH)
     end
 
     it "logs through Console by default, at a level by status" do

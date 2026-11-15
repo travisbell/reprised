@@ -30,6 +30,18 @@ RSpec.describe Reprise::Plugins::ActionView, type: :app do
     )
   end
 
+  it "with escape: true, escapes <%= but not helper output, as Rails does" do
+    mock_app do
+      plugin Reprise::Plugins::ActionView, helpers: [ActionView::Helpers::TagHelper]
+      set :erb, { escape: true }
+      get("/") { erb "<%= value %>|<%== value %>|<%= tag.b(value) %>", locals: { value: "<script>" } }
+    end
+
+    get "/"
+
+    expect(body).to eq("&lt;script&gt;|<script>|<b>&lt;script&gt;</b>")
+  end
+
   it "escapes helper arguments, doesn't escape helper output twice, and leaves <%= raw as in Sinatra" do
     get "/tags"
 

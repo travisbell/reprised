@@ -61,7 +61,10 @@ module Reprise
         end
 
         def started(env, request_id)
-          @in_flight[env] = [Telemetry.monotonic_now, env["REQUEST_METHOD"], env["PATH_INFO"], env["QUERY_STRING"], env[request_id]]
+          @in_flight[env] = [
+            Telemetry.monotonic_now, env["REQUEST_METHOD"], env["PATH_INFO"], env["QUERY_STRING"],
+            env[request_id]&.slice(0, Requests::MAX_REQUEST_ID_LENGTH)
+          ]
         end
 
         # The request that caused a stall usually finishes before the heartbeat reports it, so recent slow ones are kept.

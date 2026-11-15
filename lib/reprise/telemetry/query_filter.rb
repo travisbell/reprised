@@ -7,8 +7,11 @@ module Reprise
     #
     #   QueryFilter.new.call("api_key=abc&page=2", max_length: 200) # => "api_key=[FILTERED]&page=2"
     class QueryFilter
-      # Parts of parameter names (case ignored) whose values are filtered: Rails' defaults, and session ids.
-      DEFAULT_PARAMS = %w[passw email secret token _key crypt salt certificate otp ssn cvv cvc session].freeze
+      # Parts of parameter names (case ignored) whose values are filtered: Rails' defaults, session ids, and the other
+      # common names for keys and credentials (apikey, auth and authorization, jwt, signature, pwd).
+      DEFAULT_PARAMS = %w[
+        passw email secret token _key crypt salt certificate otp ssn cvv cvc session apikey auth jwt signature pwd credential
+      ].freeze
       FILTERED = '\1[FILTERED]'
 
       # @parameter params [Array(String)] Parts of parameter names to filter: a name containing any of them is.

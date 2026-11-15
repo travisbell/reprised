@@ -10,8 +10,9 @@ module Reprise
   # 3. Before filters run once, in the matched route's scope, right before its body: the app's, plus the matched
   #    controller's own, in definition order. If no route matches, the app's run anyway (in the app's scope), and the
   #    request is a 404.
-  # 4. The route's body runs. `pass` moves on to the next matching route, `halt` stops with a response.
-  # 5. After filters run, whatever happened, chosen the same way as before filters.
+  # 4. The route's body runs. `pass` moves on to the next matching route, `halt` stops with a response. A route in
+  #    another controller runs that controller's before filters first, so `pass` can't skip a controller's filters.
+  # 5. After filters run, whatever happened: the app's, and those of each controller whose before filters ran.
   #
   # Exceptions go to error handlers by class, then by status: the matched controller's first, then the app's. A
   # response status (`halt 404`) also goes to the status's handler when no exception was raised.
@@ -37,6 +38,8 @@ module Reprise
       @scope = app.new(env)
       @route = nil
       @filtered = false
+      # The controllers whose filters run for this request: each one a matched route belonged to.
+      @filter_owners = []
       @pinned_content_type = false
       # Until user code (a condition, filter, or route) has run, the scope holds only what Controller#initialize set,
       # so moving it to another controller needn't look for instance variables to carry over.
@@ -119,7 +122,11 @@ module Reprise
           next unless route.conditions.empty? || conditions_met?(route)
 
           matched(route)
-          before_filters! unless @filtered
+          if !@filtered
+            before_filters!
+          elsif !(route.owner <= App) && !@filter_owners.include?(route.owner)
+            controller_filters!(route.owner)
+          end
           # Sinatra sets it as the route's body starts, so it's unset for a request a before filter turned away.
           env["sinatra.route"] = route.to_s if @runtime.sinatra_env
           catch(:pass) do
@@ -171,12 +178,24 @@ module Reprise
     # route must agree with it rather than replace it (as in Sinatra).
     def before_filters!
       @filtered = true
+      @filter_owners << @route.owner if @route && !(@route.owner <= App)
       filters = @runtime.before
       return if filters&.empty?
 
       content_type_before = response["content-type"]
       filters ? run_unconditional(filters) : filter!(:before)
       @pinned_content_type = response["content-type"] != content_type_before
+    end
+
+    # Runs +owner+'s before filters, for a route of another controller than the one whose filters have run (as after
+    # `pass`): they'd have run had its route matched first. The app's have run already, and don't run again.
+    def controller_filters!(owner)
+      @filter_owners << owner
+      return if @runtime.before # Every before filter is the app's.
+
+      content_type_before = response["content-type"]
+      filter!(:before, owner)
+      @pinned_content_type ||= response["content-type"] != content_type_before
     end
 
     # Filters that apply to every request run in order, with no matching and no params to merge. Returns nil: in
@@ -186,10 +205,18 @@ module Reprise
       nil
     end
 
-    # Runs the filters of +type+ whose pattern matches: the app's, and the matched route's controller's.
-    def filter!(type)
+    # Runs the filters of +type+ whose pattern matches: the app's, and those of the controllers whose routes matched
+    # (or only +owner+'s). A controller's filter runs in its own controller's scope; the scope is the matched route's
+    # again afterwards.
+    def filter!(type, owner = nil)
+      home = @route&.owner || @app
       @app.filter_router(type).each(:any, path) do |filter, filter_params|
-        next unless filter.owner <= App || filter.owner == @route&.owner
+        if owner
+          next unless filter.owner == owner
+        else
+          next unless filter.owner <= App || @filter_owners.include?(filter.owner)
+        end
+        enter(filter.owner) unless filter.owner <= App
 
         with_params(filter_params) do
           catch(:pass) do
@@ -199,6 +226,8 @@ module Reprise
           end
         end
       end
+    ensure
+      enter(home) if home
     end
 
     def conditions_met?(definition) = definition.conditions.all? { it.met?(scope) }

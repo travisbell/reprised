@@ -256,8 +256,12 @@ Error handlers answer for an exception class or a response status, with the bloc
 error(Movie::NotFound) { not_found "No such movie" }
 error(404) { erb :"errors/404" }
 error(500..599) { "Something went wrong" }
-error { |boom| "Unexpected: #{boom.message}" }   # any exception
 not_found { erb :"errors/404" }                  # error(404)
+
+error do |boom|                                  # any exception
+  ErrorReporter.notify(boom)                     # report it, but don't show its message to the client
+  "Something went wrong"
+end
 ```
 
 - An exception goes to the handler for its class, then its superclasses, then its status. A response status
@@ -317,10 +321,13 @@ end
 - **The app's helpers are global:** `helpers do ... end` and `helpers SomeModule` on the app reach every controller.
   `set :helper_isolation, false` makes controllers' `helpers` global too, as Sinatra extensions' are, which is useful
   while migrating. A controller's plain `def`s stay its own either way.
-- **Filters are scoped:** a controller's filters run only for its own routes. The app's run for every request.
+- **Filters are scoped:** a controller's filters run only for its own routes. The app's run for every request. A route
+  reached by `pass` from another controller's route runs its own controller's before filters first, so a `pass` can't
+  skip them.
 - **Overlap check:** at boot, Reprise reports any controller filter whose pattern also matches another controller's
-  route, since it won't run for that route as it would in Sinatra. `set :filter_overlap` to `:warn` (the default),
-  `:raise`, or `:ignore`.
+  route, since it won't run for that route as it would in Sinatra. Each pattern of an Array route is checked; a regexp
+  route can't be, so it's listed as unchecked. `set :filter_overlap` to `:warn` (the default, printed whatever
+  `$VERBOSE` is), `:raise`, or `:ignore`.
 - **Settings are the app's:** controllers read them with `settings`, but can't `set` them or `use` middleware.
   A controller mounts in one app.
 - **Conditions:** a controller's route options compile in the app's context, so they can use the app's conditions.
@@ -402,12 +409,14 @@ get "/movie/:id" do
 end
 ```
 
-- `erb :name` renders `views/name.erb`; a String is template source (`erb "<%= 1 + 1 %>"`).
+- `erb :name` renders `views/name.erb`; a String is template source (`erb "<%= 1 + 1 %>"`). As in Sinatra, a name can
+  reach outside the views directory (`erb :"../shared/card"`), and a String is code: never take either from a request.
 - A route's template gets `views/layout.erb` as its layout, if that file exists. `layout: :name` picks another, and
   `layout: false` uses none. Templates rendered inside templates get no layout, and the layout gets the template's
   locals.
-- `<%= %>` doesn't escape and `<%== %>` does, as in Sinatra. `escape: true` (per call, or in `set :erb`) escapes
-  `<%= %>`.
+- `<%= %>` doesn't escape and `<%== %>` does, as in Sinatra. For a new app, `set :erb, { escape: true }` is the safer
+  default: `<%= %>` escapes, and `<%== %>` writes HTML as it is. With the ActionView plugin, helper output (an
+  `html_safe` string) isn't escaped again either way, as in Rails.
 - `partial "movie/_card", movie:` renders without a layout, with locals as keywords. `render :erb, :name, options`
   is Sinatra's form. `capture { ... }` renders a block of template to a String, for helpers that take one.
 - Options per call: `layout:`, `locals:`, `views:`, `scope:`, `content_type:`, `layout_options:`, and Erubi's own.
@@ -511,6 +520,17 @@ The route matches only upgrade requests; others for the path move on to the next
 request's scope, with the route's params, once the connection is upgraded. Options (`handler:`, `protocols:`,
 `extensions:`) go to async-websocket's Rack adapter.
 
+Browsers send cookies with a WebSocket handshake from any site, and neither Reprise nor async-websocket checks its
+`Origin`. A socket that relies on the session should check it, in a before filter:
+
+```ruby
+helpers do
+  def same_origin? = env["HTTP_ORIGIN"].nil? || env["HTTP_ORIGIN"] == "#{request.scheme}://#{request.host_with_port}"
+end
+
+before("/ws/*") { halt 403 unless same_origin? }
+```
+
 Reprise takes no locks while serving requests: routers and templates are frozen, or replaced atomically. Its Falcon
 specs run with [Async::Safe](https://github.com/socketry/async-safe) enabled.
 
@@ -531,7 +551,8 @@ plugin Reprise::Plugins::ActionView, helpers: [
 ]
 ```
 
-The helpers are global. ERB writes to an ActionView-compatible buffer in `@output_buffer`.
+The helpers are global. ERB writes to an ActionView-compatible buffer in `@output_buffer`. Templates don't escape
+`<%= %>` unless you `set :erb, { escape: true }`; either way, `html_safe` helper output isn't escaped twice.
 
 ### Phlex
 
@@ -714,6 +735,16 @@ Most route code moves over unchanged. What changes:
   `configure`.
 - **Settings** are methods on the app (`settings.views`). Server, static file, session, protection, and logging
   settings are gone; use Rack middleware in config.ru.
+- **Protection isn't on by default.** Sinatra adds `Rack::Protection` (frame options, origin checks, JSON CSRF, path
+  traversal, IP spoofing, and XSS headers) unless it's disabled, and host authorization in development. Reprise doesn't.
+  To keep Sinatra's defaults, add the rack-protection gem and, in config.ru:
+
+  ```ruby
+  require "rack/protection"
+
+  # Sinatra's setup. With a session middleware above it, leave out without_session (Sinatra does when sessions are on).
+  use Rack::Protection, reaction: :drop_session, without_session: true
+  ```
 - **Not included:** classic (top-level) apps, `run!`, Tilt and non-ERB engines, inline templates, `forward`, `back`,
   `etag`, and `last_modified` (use `Rack::ConditionalGet` and `Rack::ETag`), and the `host_name`, `user_agent`, and
   `agent` conditions.

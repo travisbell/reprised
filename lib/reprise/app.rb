@@ -224,38 +224,54 @@ module Reprise
       end
 
       # Warns (or raises, per the filter_overlap setting) when a controller's filter matches another controller's
-      # route: scoped to its own controller, it won't run for that route, as it would have in Sinatra.
+      # route: scoped to its own controller, it won't run for that route, as it would have in Sinatra. Each of a route's
+      # patterns is checked with sample values. A regexp route can't be, so it's checked only against filters with no
+      # path (which match every request), and listed as unchecked if there are other controllers' filters with paths.
+      # The report goes to $stderr whatever $VERBOSE is, since a filter that doesn't run may be an auth check.
       def check_filter_overlap(routes)
         mode = settings.filter_overlap
         raise ArgumentError, "filter_overlap must be one of #{FILTER_OVERLAP}" unless FILTER_OVERLAP.include?(mode)
         return if mode == :ignore
+
+        scoped = @filters.values.flatten.reject { it.owner <= App }
         # Only a controller's filters are scoped, so with none there's nothing to check (and nothing to expand).
-        return unless @filters.values.flatten.any? { !(it.owner <= App) }
+        return if scoped.empty?
 
-        overlaps = routes.flat_map do |route|
-          next [] unless (path = sample_path(route.path))
-
-          @filter_routers.values.flat_map do |filters|
-            filters.each(:any, path).filter_map do |filter, _|
-              [filter, route] unless filter.owner <= App || filter.owner == route.owner
+        overlaps = []
+        unchecked = []
+        routes.each do |route|
+          patterns = Array(route.path)
+          if patterns.any?(Regexp)
+            overlaps.concat(scoped.select { it.path.nil? && it.owner != route.owner }.map { [it, route] })
+            unchecked << route if scoped.any? { it.path && it.owner != route.owner }
+          end
+          patterns.grep(String).filter_map { sample_path(it) }.each do |path|
+            @filter_routers.values.each do |filters|
+              filters.each(:any, path) do |filter, _|
+                overlaps << [filter, route] unless filter.owner <= App || filter.owner == route.owner
+              end
             end
           end
         end
-        return if overlaps.empty?
+        overlaps.uniq!
+        return if overlaps.empty? && unchecked.empty?
 
-        message = overlaps.map do |filter, route|
+        lines = overlaps.map do |filter, route|
           "#{filter} in #{filter.owner} (#{filter.source_location&.join(":")}) matches #{route} in #{route.owner} " \
             "(#{route.source_location&.join(":")}), but runs only for its own controller's routes"
-        end.join("\n  ")
-        raise ArgumentError, "Reprise: filters overlap other controllers' routes:\n  #{message}" if mode == :raise
+        end
+        lines.concat(unchecked.map do |route|
+          "#{route} in #{route.owner} (#{route.source_location&.join(":")}) is a regexp route, so it wasn't checked " \
+            "against other controllers' filters with paths"
+        end)
+        message = "Reprise: filters overlap other controllers' routes:\n  #{lines.join("\n  ")}"
+        raise ArgumentError, message if mode == :raise && !overlaps.empty?
 
-        Kernel.warn("Reprise: filters overlap other controllers' routes:\n  #{message}")
+        $stderr.puts(message)
       end
 
-      # A path +pattern+ matches, for checking which filters would apply to it, or nil for a regexp or Array.
+      # A path +pattern+ matches, for checking which filters would apply to it, or nil if it can't be expanded.
       def sample_path(pattern)
-        return unless pattern.is_a?(String)
-
         mustermann = Mustermann.new(pattern, **settings.mustermann_opts)
         mustermann.expand(:ignore, mustermann.names.to_h { [it, it == "splat" ? ["x"] * pattern.count("*") : "x"] })
       rescue Mustermann::Error, ArgumentError

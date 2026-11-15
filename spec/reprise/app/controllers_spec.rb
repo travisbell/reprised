@@ -137,12 +137,79 @@ RSpec.describe "Controllers" do
     end
   end
 
+  describe "after a pass to another controller's route" do
+    let(:trail) { [] }
+
+    before do
+      trail = self.trail
+      pages = controller do
+        before { trail << "pages filter" }
+        after { trail << "pages after" }
+        get("/:slug") do
+          trail << "pages route"
+          pass unless params[:slug] == "about"
+          "about"
+        end
+      end
+      admin = controller do
+        before do
+          trail << "admin filter"
+          halt 401, "login required" unless env["HTTP_X_ADMIN"]
+        end
+        after { trail << "admin after" }
+        get("/admin") { trail << "admin route" and "dashboard" }
+      end
+      mock_app do
+        before { trail << "app filter" }
+        mount pages, admin
+      end
+    end
+
+    it "runs that controller's before filters, so a pass can't skip them" do
+      get "/admin"
+
+      expect([status, body]).to eq([401, "login required"])
+      expect(trail).to eq(["app filter", "pages filter", "pages route", "admin filter", "pages after", "admin after"])
+    end
+
+    it "runs the app's filters once, and the route once its controller's filters let it" do
+      get "/admin", {}, "HTTP_X_ADMIN" => "yes"
+
+      expect([status, body]).to eq([200, "dashboard"])
+      expect(trail).to eq(["app filter", "pages filter", "pages route", "admin filter", "admin route", "pages after", "admin after"])
+    end
+  end
+
   it "warns at finalize about a filter that matches another controller's route" do
     teams = controller { before("/teams/*") { halt 404 } }
     search = controller { get("/teams/search") { "search" } }
     mock_app { mount teams, search }
 
     expect { app.finalize! }.to output(%r{before /teams/\* in .* matches GET /teams/search in .*runs only for its own}m).to_stderr
+  end
+
+  it "checks each of an Array route's patterns, and reports regexp routes it can't check, whatever $VERBOSE is" do
+    teams = controller do
+      before("/teams/*") { halt 401 }
+      before { halt 401 }
+    end
+    others = controller do
+      get(["/teams/audit", "/audit"]) { "audit" }
+      get(%r{/teams/billing}) { "billing" }
+    end
+    mock_app { mount teams, others }
+    verbose = $VERBOSE
+    $VERBOSE = nil
+
+    expect { app.finalize! }.to output(
+      a_string_including(
+        "before /teams/* in #{teams} (", "matches GET /teams/audit | /audit in #{others}",
+        "before * in #{teams} (", "matches GET /teams/billing in #{others}",
+        "GET /teams/billing in #{others} (", "is a regexp route, so it wasn't checked"
+      )
+    ).to_stderr
+  ensure
+    $VERBOSE = verbose
   end
 
   it "skips the overlap check when no controller has filters" do

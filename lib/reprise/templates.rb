@@ -293,6 +293,8 @@ module Reprise
         end
       end
 
+      # As in Sinatra, a name may reach outside the views directory ("../shared/card"), so a template name must never
+      # come from a request.
       def file_template(name, engine_options, views, eat_errors:)
         path = File.join(views, "#{name}.erb")
         throw(:layout_missing) if eat_errors && !File.exist?(path)

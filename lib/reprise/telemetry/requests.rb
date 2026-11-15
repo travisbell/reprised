@@ -35,6 +35,7 @@ module Reprise
       UNMATCHED = "unmatched"
       MAX_QUERY_LENGTH = 500
       MAX_USER_AGENT_LENGTH = 200
+      MAX_REQUEST_ID_LENGTH = 200
       HISTOGRAM_LABELS = ["status_class"].freeze
 
       # The Console level of a request's log line: info, warn for a 4xx, or error for a 5xx.
@@ -132,7 +133,7 @@ module Reprise
           query: @query_filter.call(env["QUERY_STRING"], max_length: MAX_QUERY_LENGTH),
           duration: duration.round(4),
           bytes: headers&.[]("content-length"),
-          request_id: env[@request_id],
+          request_id: env[@request_id]&.slice(0, MAX_REQUEST_ID_LENGTH),
           trace_id: (span.hex_trace_id if span&.valid?),
           ip: ::Rack::Request.new(env).ip,
           user_agent: env["HTTP_USER_AGENT"]&.slice(0, MAX_USER_AGENT_LENGTH),

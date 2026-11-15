@@ -15,10 +15,11 @@ module Reprise
     # helpers are global: the app and all its controllers have them.
     module ActionView
       # An ActionView::OutputBuffer that Erubi's CaptureBlockEngine can write to: `<%= %>` appends as is (templates
-      # don't escape by default, as in Sinatra) and `<%== %>` escapes.
+      # don't escape by default, as in Sinatra) and `<%== %>` escapes. With `set :erb, escape: true` it's the other way
+      # round. Either way, what escapes leaves html_safe strings (helper output) as they are, as Rails does.
       class Buffer < ::ActionView::OutputBuffer
         def |(other)
-          @raw_buffer << h(other)
+          @raw_buffer << (other.respond_to?(:html_safe?) && other.html_safe? ? other.to_s : h(other))
           self
         end
 

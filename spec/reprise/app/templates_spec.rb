@@ -18,6 +18,14 @@ RSpec.describe "Templates" do
     expect(body).to eq("Hello Ana!\n")
   end
 
+  it "renders a template outside the views directory by a relative name, as Sinatra does" do
+    app_with_views(views) { get("/") { erb :"../implicit_layout/views/page" } }
+
+    get "/"
+
+    expect(status).to eq(200)
+  end
+
   it "renders a layout around it, with the template's locals" do
     app_with_views(views) { get("/") { erb :hello, layout: :"layouts/main", locals: { name: "Ana", title: "Greeting" } } }
 
