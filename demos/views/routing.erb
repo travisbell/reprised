@@ -1,0 +1,79 @@
+<h1>Routing</h1>
+<p class="lead">
+  Routes are tried in the order they're defined, and the first that matches answers. Each link below is answered by
+  one of the routes in <code>demos/controllers/routing_demo.rb</code>.
+</p>
+
+<table class="tries">
+  <tr>
+    <td><a href="/routing/movies/8">/routing/movies/8</a></td>
+    <td>A pattern param, <code>/routing/movies/:id</code>, as an HTML page.</td>
+  </tr>
+  <tr>
+    <td><a href="/routing/movies/8.json">/routing/movies/8.json</a></td>
+    <td>The same movie as JSON, from <code>/routing/movies/:id.json</code>.</td>
+  </tr>
+  <tr>
+    <td><code>curl -H "Accept: application/json" <%= uri("/routing/movies/8") %></code></td>
+    <td>
+      <code>provides: :html</code>, then <code>provides: :json</code>: the Accept header chooses between two routes.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <a href="/routing/movies/99">/routing/movies/99</a>,
+      <a href="/routing/movies/99.json">99.json</a>
+    </td>
+    <td>
+      <code>MovieNotFound</code> (a <code>Reprised::Error</code> with a 404), answered by the controller's error
+      handler in the format its route gives.
+    </td>
+  </tr>
+  <tr>
+    <td><a href="/routing/years/1920-1924">/routing/years/1920-1924</a></td>
+    <td>Two params in one segment, <code>/routing/years/:from-:to</code>, as the block's arguments.</td>
+  </tr>
+  <tr>
+    <td>
+      <a href="/routing/search?q=the">/routing/search?q=the</a>,
+      <a href="/routing/search?q=th">?q=th</a>
+    </td>
+    <td>A named condition, <code>min_length: 3</code>. The route matches only when it's true, and the next one answers otherwise.</td>
+  </tr>
+  <tr>
+    <td>
+      <a href="/routing/lookup/3">/routing/lookup/3</a>,
+      <a href="/routing/lookup/science-fiction">science-fiction</a>
+    </td>
+    <td><code>pass</code>: the first route takes ids (and redirects), and passes anything else to the next.</td>
+  </tr>
+  <tr>
+    <td><a href="/routing/teapot">/routing/teapot</a></td>
+    <td><code>halt 418</code>, with a header and a body.</td>
+  </tr>
+  <tr>
+    <td>
+      <a href="/routing/echo?film=Metropolis">/routing/echo?film=Metropolis</a>
+      <%= form_tag("/routing/echo", class: "inline") do %>
+        <%= hidden_field_tag(:film, "Nosferatu") %>
+        <%= submit_tag("POST it") %>
+      <% end %>
+    </td>
+    <td><code>route :get, :post</code>: one block for both verbs, answering with the method and params.</td>
+  </tr>
+  <tr>
+    <td><a href="/routing/visits">/routing/visits</a></td>
+    <td>Cookies: a visit counter. Reload the page to count up.</td>
+  </tr>
+</table>
+
+<%= form_tag("/routing/search", method: :get, class: "inline") do %>
+  <%= label_tag(:q, "Search titles") %>
+  <%= search_field_tag(:q, nil, placeholder: "gold") %>
+  <%= submit_tag("Search", name: nil) %>
+<% end %>
+
+<p class="muted">
+  Every response from these routes has an <code>x-demo: routing</code> header, from the controller's after filter. The
+  other demos' responses don't.
+</p>

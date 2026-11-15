@@ -1,0 +1,63 @@
+<h1>Streaming</h1>
+<p class="lead">
+  Falcon runs each request in its own fiber, so a route waiting on IO (a query, an HTTP call, a <code>sleep</code>)
+  lets the others run. The routes are in <code>demos/controllers/streaming_demo.rb</code>.
+</p>
+
+<section>
+  <h2>A response streamed as it's written</h2>
+  <p><code>stream do |out| ... end</code> sends each write as it's made. This reads <code>/streaming/countdown</code> as it arrives.</p>
+  <button data-run="countdown">Start the countdown</button>
+  <pre id="countdown" class="output"></pre>
+</section>
+
+<section>
+  <h2>Concurrent work, with Async::Barrier</h2>
+  <p>
+    Three lookups of 0.9s, 0.7s, and 0.5s run at once, so they take about 0.9s, not 2.1s. Each reaches the request
+    through <code>Reprised.current</code>, from inside its own task.
+  </p>
+  <button data-run="parallel">Run the lookups</button>
+  <pre id="parallel" class="output"></pre>
+</section>
+
+<section>
+  <h2>Route timeouts</h2>
+  <p>
+    <code>get "/streaming/slow", timeout: 1</code> stops the route after a second, raising <code>Reprised::Timeout</code>
+    (a 503), which the controller's error handler answers.
+  </p>
+  <button data-run="slow">Take 3 seconds</button>
+  <button data-run="slow" data-query="seconds=0.5">Take 0.5 seconds</button>
+  <pre id="slow" class="output"></pre>
+</section>
+
+<section>
+  <h2>A stall</h2>
+  <p>
+    Busy work that never waits on IO holds up every request in the process. Start the <a href="/events" target="_blank">clock</a>
+    in another tab, then block the event loop for 1.5s: the clock stops, and the server's log has the stall
+    detector's report, naming this request.
+  </p>
+  <button data-run="block">Block the event loop</button>
+  <pre id="block" class="output"></pre>
+</section>
+
+<script>
+  document.querySelectorAll("[data-run]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const name = button.dataset.run;
+      const output = document.getElementById(name);
+      const started = performance.now();
+      output.textContent = "";
+      const response = await fetch(`/streaming/${name}${button.dataset.query ? `?${button.dataset.query}` : ""}`);
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output.textContent += value;
+      }
+      output.textContent += `\n(${response.status}, ${((performance.now() - started) / 1000).toFixed(2)}s)`;
+    });
+  });
+</script>

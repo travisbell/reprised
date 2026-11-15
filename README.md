@@ -32,6 +32,9 @@ run App # config.ru
 route tables (about 190,000 generated requests, with no unexplained differences), and the Async features are tested
 under Falcon. See [PLAN.md](PLAN.md) for the design and what's next.
 
+**Demos:** [demos/](demos) is a small app with a page for each feature: routing, streaming, Server-Sent Events,
+WebSockets, ActionView forms, and Phlex components. `bundle exec rake demos` runs it under Falcon.
+
 ## Contents
 
 - [Installing](#installing)
@@ -846,6 +849,7 @@ bundle exec rspec
 ASYNC_SAFE=1 bundle exec rspec spec/falcon   # Falcon integration specs, checking for unsafe concurrent access
 bundle exec rubocop
 bundle exec rake spike                       # routing and dispatch parity with Sinatra, see spike/README.md
+bundle exec rake demos                       # the demos app, at http://localhost:9292
 ```
 
 CI also runs the specs on Mustermann 3.1: `MUSTERMANN_VERSION="~> 3.1" bundle install`.

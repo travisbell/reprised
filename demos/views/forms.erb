@@ -1,0 +1,64 @@
+<h1>Forms</h1>
+<p class="lead">
+  With the ActionView plugin, ERB templates use ActionView's helpers, and helpers that take a block
+  (<code>&lt;%= form_tag(path) do %&gt;</code>) capture it. <code>field</code>, which wraps each input in a label
+  and its error, is the controller's own helper, built on <code>capture</code>. Everything's in
+  <code>demos/controllers/forms_demo.rb</code> and <code>demos/views/forms.erb</code>.
+</p>
+
+<div class="columns">
+  <section>
+    <h2>Suggest a movie</h2>
+    <p class="muted">Leave a field empty to see the errors: the form comes back as a 422, with what you typed.</p>
+    <%= form_tag("/forms/suggestions", class: "stack", novalidate: true) do %>
+      <%= field(:title, "Title") do %>
+        <%= text_field_tag(:title, @form[:title], autocomplete: "off") %>
+      <% end %>
+      <%= field(:year, "Year") do %>
+        <%= number_field_tag(:year, @form[:year], min: 1888, max: Time.now.year) %>
+      <% end %>
+      <%= field(:genre, "Genre") do %>
+        <%= select_tag(:genre, options_for_select(GENRES, @form[:genre]), include_blank: true) %>
+      <% end %>
+      <%= field(:notes, "Why?") do %>
+        <%= text_area_tag(:notes, @form[:notes], rows: 3) %>
+      <% end %>
+      <label class="check"><%= check_box_tag(:seen, "1", @form[:seen] == "1") %> I've seen it</label>
+      <%= submit_tag("Suggest it") %>
+    <% end %>
+  </section>
+
+  <section>
+    <h2>Upload a poster</h2>
+    <p class="muted">A multipart form. Nothing's kept: the route says what it got.</p>
+    <%= form_tag("/forms/poster", multipart: true, class: "stack") do %>
+      <%= file_field_tag(:poster, accept: "image/*") %>
+      <%= submit_tag("Upload") %>
+    <% end %>
+    <% if upload %>
+      <dl class="upload">
+        <dt>File</dt><dd><%= upload[:filename] %></dd>
+        <dt>Type</dt><dd><%= upload[:type] %></dd>
+        <dt>Size</dt><dd><%= number_to_human_size(upload[:size]) %></dd>
+      </dl>
+    <% end %>
+    <% if upload_error %>
+      <p class="error"><%= upload_error %></p>
+    <% end %>
+  </section>
+</div>
+
+<section id="suggestions">
+  <h2><%= pluralize(suggestions.count, "suggestion") %></h2>
+  <ul class="suggestions">
+    <% suggestions.each do |suggestion| %>
+      <li>
+        <strong><%= suggestion.title %></strong> (<%= suggestion.year %>)
+        <%= render Components::Badge.new(suggestion.genre, tone: suggestion.genre.downcase.tr(" ", "-")) %>
+        <% if suggestion.seen %><%= render Components::Badge.new("seen it") %><% end %>
+        <%= simple_format(suggestion.notes) unless suggestion.notes.empty? %>
+        <small class="muted"><%= time_ago_in_words(suggestion.at) %> ago</small>
+      </li>
+    <% end %>
+  </ul>
+</section>

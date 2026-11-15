@@ -1,0 +1,11 @@
+<p class="crumbs"><a href="/routing">Routing</a></p>
+<h1><%= heading %></h1>
+<% if movies.empty? %>
+  <p>No movies.</p>
+<% else %>
+  <div class="grid">
+    <% movies.each do |movie| %>
+      <%= render Components::MovieCard.new(movie) %>
+    <% end %>
+  </div>
+<% end %>

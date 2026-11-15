@@ -1,0 +1,18 @@
+<p class="crumbs"><a href="/components">Phlex</a></p>
+<h1>Phlex in ERB</h1>
+<p class="lead">
+  An ERB template rendering Phlex components with <code>&lt;%= render Components::Badge.new(genre) %&gt;</code>.
+  Their HTML isn't escaped, though this app's ERB escapes <code>&lt;%= %&gt;</code>.
+</p>
+
+<p>
+  <% GENRES.each do |genre| %>
+    <%= render Components::Badge.new(genre, tone: genre.downcase.tr(" ", "-")) %>
+  <% end %>
+</p>
+
+<div class="grid">
+  <% movies.each do |movie| %>
+    <%= render Components::MovieCard.new(movie) %>
+  <% end %>
+</div>

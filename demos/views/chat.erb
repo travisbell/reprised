@@ -1,0 +1,60 @@
+<h1>WebSockets</h1>
+<p class="lead">
+  A chat room. <code>websocket "/chat/socket" do |connection| ... end</code> matches only upgrade requests, and runs
+  once the connection is open, in the request's scope, with its params. Open this page in two windows to talk to
+  yourself. The route is in <code>demos/controllers/chat_demo.rb</code>.
+</p>
+
+<form id="join" class="inline">
+  <label for="name">Your name</label>
+  <input id="name" maxlength="24" placeholder="Buster" autocomplete="off">
+  <button>Join</button>
+</form>
+
+<div id="room" hidden>
+  <p class="muted"><span id="count">0</span> here</p>
+  <ul id="messages" class="messages"></ul>
+  <form id="say" class="inline">
+    <input id="text" maxlength="500" placeholder="Say something" autocomplete="off">
+    <button>Send</button>
+  </form>
+</div>
+
+<script>
+  const messages = document.getElementById("messages");
+  const show = (text, kind) => {
+    const item = document.createElement("li");
+    item.className = kind;
+    item.textContent = text;
+    messages.append(item);
+    messages.scrollTop = messages.scrollHeight;
+  };
+
+  let socket;
+  document.getElementById("join").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = document.getElementById("name").value;
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    socket = new WebSocket(`${scheme}://${location.host}/chat/socket?name=${encodeURIComponent(name)}`);
+    socket.addEventListener("open", () => {
+      event.target.hidden = true;
+      document.getElementById("room").hidden = false;
+      document.getElementById("text").focus();
+    });
+    socket.addEventListener("close", () => show("Disconnected", "notice"));
+    socket.addEventListener("message", (event) => {
+      const message = JSON.parse(event.data);
+      if (message.count !== undefined) document.getElementById("count").textContent = message.count;
+      if (message.type === "message") show(`${message.name}: ${message.text}`, "message");
+      if (message.type === "joined") show(`${message.name} joined`, "notice");
+      if (message.type === "left") show(`${message.name} left`, "notice");
+    });
+  });
+
+  document.getElementById("say").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = document.getElementById("text");
+    if (text.value.trim()) socket.send(text.value);
+    text.value = "";
+  });
+</script>

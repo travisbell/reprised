@@ -1,0 +1,52 @@
+<h1>Server-Sent Events</h1>
+<p class="lead">
+  <code>event_stream do |sse| ... end</code> answers with <code>text/event-stream</code>, and sends events until its
+  block returns or the browser goes away. The routes are in <code>demos/controllers/events_demo.rb</code>.
+</p>
+
+<section>
+  <h2>A clock</h2>
+  <p>
+    An event a second, each with an id. Stop the server and start it again: the browser reconnects, sending the last
+    id it had (<code>Last-Event-ID</code>), and the count carries on from there.
+  </p>
+  <p class="clock"><span id="time">--:--:--</span> <small>tick <span id="tick">0</span>, <span id="status">connecting</span></small></p>
+</section>
+
+<section>
+  <h2>A job's progress</h2>
+  <p>Progress events, then a <code>done</code> event, at which the page closes the stream.</p>
+  <button id="restore">Restore the film</button>
+  <progress id="progress" max="100" value="0"></progress>
+  <p id="step" class="muted"></p>
+</section>
+
+<script>
+  const clock = new EventSource("/events/clock");
+  const status = document.getElementById("status");
+  clock.addEventListener("open", () => { status.textContent = "connected"; });
+  clock.addEventListener("error", () => { status.textContent = "reconnecting"; });
+  clock.addEventListener("tick", (event) => {
+    const { tick, time } = JSON.parse(event.data);
+    document.getElementById("time").textContent = time;
+    document.getElementById("tick").textContent = tick;
+  });
+
+  document.getElementById("restore").addEventListener("click", (event) => {
+    const button = event.target;
+    const progress = document.getElementById("progress");
+    const step = document.getElementById("step");
+    button.disabled = true;
+    const job = new EventSource("/events/progress");
+    job.addEventListener("progress", (event) => {
+      const data = JSON.parse(event.data);
+      progress.value = data.percent;
+      step.textContent = `${data.step}… ${data.percent}%`;
+    });
+    job.addEventListener("done", (event) => {
+      job.close();
+      step.textContent = event.data;
+      button.disabled = false;
+    });
+  });
+</script>

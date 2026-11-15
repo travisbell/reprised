@@ -1,0 +1,7 @@
+<p class="crumbs"><a href="/routing">Routing</a></p>
+<h1><%= @movie.title %></h1>
+<p>
+  <%= @movie.year %>, directed by <%= @movie.director %>.
+  <%= render Components::Badge.new(@movie.genre, tone: @movie.genre.downcase.tr(" ", "-")) %>
+</p>
+<p>Also as <a href="/routing/movies/<%= @movie.id %>.json">JSON</a>.</p>

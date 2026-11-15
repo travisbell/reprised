@@ -1,0 +1,38 @@
+<h1>Reprised demos</h1>
+<p class="lead">
+  One Reprised app, running under Falcon, with a controller for each demo. Each page's footer says which route answered
+  it, and where it's defined.
+</p>
+
+<div class="grid">
+  <% DEMOS.each do |path, title, description| %>
+    <a class="card tile" href="<%= path %>">
+      <h2><%= title %></h2>
+      <p><%= description %></p>
+    </a>
+  <% end %>
+</div>
+
+<h2>On every page</h2>
+<ul>
+  <li>
+    Each demo is a controller in <code>demos/controllers/</code>, mounted in <code>demos/app.rb</code>. Its filters,
+    helpers, and error handlers apply to its own routes.
+  </li>
+  <li>
+    The stylesheet is ERB, served through the Sprockets plugin. Its logo's URL comes from <code>asset_path</code>.
+  </li>
+  <li>
+    Every response has a <code>Server-Timing</code> header, from a plugin in <code>demos/server_timing.rb</code>: your
+    browser's network panel shows it.
+  </li>
+  <li>
+    The server logs a line for each request, labelled with its route, from <code>Reprised::Telemetry::Requests</code>
+    in <code>demos/config.ru</code>. The stall detector there logs any request that blocks the event loop.
+  </li>
+  <li>
+    In development, <code>Reprised::Reloader</code> reloads the app when a file in <code>demos/</code> changes. Edit
+    one and refresh the page.
+  </li>
+  <li><code>bundle exec reprised routes -r ./demos/app.rb Demos</code> lists the app's routes.</li>
+</ul>

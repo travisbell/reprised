@@ -6,6 +6,14 @@ RSpec::Core::RakeTask.new(:spec)
 
 task default: :spec
 
+desc "Run the demos (demos/) under Falcon, at http://localhost:9292 (PORT to change it)"
+task :demos do
+  # One worker, so the chat room's members all share a process.
+  port = ENV.fetch("PORT", "9292")
+  sh({ "RACK_ENV" => ENV.fetch("RACK_ENV", "development") },
+    "bundle exec falcon serve --bind http://localhost:#{port} --count 1 --config demos/config.ru")
+end
+
 # The phase 0 spike: compares Reprised's routing with Sinatra's on TMDB's real route tables. Needs the apps checked
 # out beside this repo (~/workspace/tmdb-web, ~/workspace/tmdb-api). See spike/README.md.
 namespace :spike do

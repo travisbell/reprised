@@ -1,0 +1,85 @@
+/* ERB, compiled by Sprockets: asset_path gives the logo's URL under /assets (its digest path, with digests on). */
+:root {
+  --ink: #1c1917;
+  --muted: #78716c;
+  --line: #e7e5e4;
+  --paper: #fafaf9;
+  --card: #ffffff;
+  --accent: #c2410c;
+  --accent-soft: #ffedd5;
+  --error: #b91c1c;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  line-height: 1.5;
+}
+
+body { margin: 0; }
+main, footer { max-width: 60rem; margin: 0 auto; padding: 0 1.25rem; }
+main { padding-bottom: 3rem; }
+footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--line); padding-top: 1rem; padding-bottom: 2rem; }
+
+a { color: var(--accent); }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; background: var(--accent-soft); padding: 0.05em 0.3em; border-radius: 4px; }
+h1 { font-size: 2rem; margin: 2rem 0 0.5rem; }
+h2 { font-size: 1.2rem; margin: 2rem 0 0.5rem; }
+.lead { font-size: 1.1rem; max-width: 46rem; }
+.muted { color: var(--muted); }
+.crumbs { margin: 1.5rem 0 0; font-size: 0.9rem; }
+
+header.site {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem;
+  padding: 0.75rem 1.25rem; background: var(--card); border-bottom: 1px solid var(--line);
+}
+header.site nav { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; }
+header.site nav a { color: var(--ink); text-decoration: none; }
+header.site nav a[aria-current] { color: var(--accent); font-weight: 600; }
+.brand {
+  padding-left: 1.9rem; font-weight: 700; color: var(--ink); text-decoration: none;
+  background: url(<%= asset_path("logo.svg") %>) no-repeat left center / 1.5rem;
+}
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; margin: 1rem 0; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; }
+.card h2, .card h3 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+.card p { margin: 0 0 0.5rem; color: var(--muted); }
+.tile { color: inherit; text-decoration: none; transition: border-color 0.15s; }
+.tile:hover { border-color: var(--accent); }
+
+.badge { display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.55rem; border-radius: 999px; background: var(--line); }
+.badge-comedy { background: #fef3c7; }
+.badge-drama { background: #dbeafe; }
+.badge-horror { background: #fee2e2; }
+.badge-science-fiction { background: #dcfce7; }
+
+.tries { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+.tries td { border-top: 1px solid var(--line); padding: 0.6rem 0.75rem 0.6rem 0; vertical-align: top; }
+.tries td:first-child { white-space: nowrap; }
+.sorts { margin: 1rem 0; }
+
+form.inline { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0.25rem 0; }
+form.stack { display: flex; flex-direction: column; gap: 0.75rem; max-width: 24rem; }
+.field { display: flex; flex-direction: column; gap: 0.2rem; }
+.field label { font-weight: 600; font-size: 0.9rem; }
+.field.invalid input, .field.invalid select, .field.invalid textarea { border-color: var(--error); }
+.error { color: var(--error); font-size: 0.85rem; margin: 0; }
+.check { display: flex; align-items: center; gap: 0.4rem; }
+input, select, textarea, button {
+  font: inherit; padding: 0.4rem 0.6rem; border: 1px solid #d6d3d1; border-radius: 6px; background: var(--card);
+}
+button, input[type="submit"] { background: var(--accent); border-color: var(--accent); color: white; cursor: pointer; }
+button:disabled { opacity: 0.5; }
+.columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 2rem; }
+.upload { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; }
+.upload dd { margin: 0; }
+.suggestions { padding-left: 1.2rem; }
+.suggestions li { margin-bottom: 0.75rem; }
+.suggestions p { margin: 0.2rem 0; }
+
+.output { background: var(--ink); color: #f5f5f4; padding: 0.75rem 1rem; border-radius: 8px; min-height: 1.5rem; white-space: pre-wrap; }
+.clock { font-size: 2.5rem; font-variant-numeric: tabular-nums; margin: 0.5rem 0; }
+.clock small { font-size: 0.9rem; color: var(--muted); }
+progress { width: 100%; max-width: 24rem; height: 1rem; accent-color: var(--accent); display: block; margin: 1rem 0 0.25rem; }
+
+.messages { list-style: none; padding: 0.75rem; margin: 0.5rem 0; height: 18rem; overflow-y: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.messages .notice { color: var(--muted); font-style: italic; }
