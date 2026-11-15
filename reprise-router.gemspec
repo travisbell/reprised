@@ -8,12 +8,12 @@ Gem::Specification.new do |spec|
   spec.authors = ["Travis Bell"]
   spec.email = ["me@travisbell.com"]
 
-  spec.summary = "A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed for Falcon and Async."
+  spec.summary = "A Sinatra-compatible Rack router for Ruby 4, built on Mustermann and designed for Falcon and Async."
   spec.description = <<~DESCRIPTION
     Reprise keeps Sinatra's controller DSL (routes, filters, conditions, halt,
-    pass, erb) and drops the rest. Routes dispatch through a Mustermann 4 trie
-    in Sinatra's first-defined-wins order, controllers get private helpers, and
-    the request scope is fiber-safe and frozen after boot.
+    pass, erb) and drops the rest. Routes dispatch through an index over
+    Mustermann patterns in Sinatra's first-defined-wins order, controllers get
+    private helpers, and the request scope is fiber-safe and frozen after boot.
   DESCRIPTION
   spec.homepage = "https://github.com/travisbell/reprise-router"
   spec.license = "MIT"

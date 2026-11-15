@@ -1,21 +1,11 @@
 # Reprise Router
 
-A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed for Falcon and Async.
+A Sinatra-compatible Rack router for Ruby 4, built on Mustermann and designed for Falcon and Async.
 
-**Status:** early. These work, and match Sinatra 4.2's routing, dispatch, and rendering on two production apps:
-
-- the core app
-- mountable controllers with private helpers
-- ERB templates, with ActionView and Phlex plugins, and a Sprockets plugin for assets
-- Async features: `Reprise.current` for the request from any fiber, per-route timeouts, streaming, Server-Sent
-  Events, and WebSocket routes, all tested under Falcon
-
-- Tooling: `reprise routes`, an OpenTelemetry plugin, and Sinatra-compatible env keys for existing middleware
-- Opt-in telemetry: request metrics and an access log, an event-loop stall detector, and reactor lag
-- Code reloading in development, with Zeitwerk
-- Running in several Ractors (experimental): `App.ractorize!`
-
-See [PLAN.md](PLAN.md).
+Reprise keeps the parts of Sinatra that apps actually use (routes, filters, conditions, `halt`, `pass`, `erb`, error
+handlers) and drops the rest. Routing goes through an index rather than a linear scan, controllers get helpers of
+their own, everything is frozen after boot, and the request scope is fiber-safe. Code written for Sinatra mostly runs
+unchanged; the differences are at the edges, and are listed in [Coming from Sinatra](#coming-from-sinatra).
 
 ```ruby
 require "reprise"
@@ -38,20 +28,579 @@ end
 run App # config.ru
 ```
 
-## Listing routes
+**Status:** early (0.1.0). Its routing, dispatch, and rendering are checked against Sinatra 4.2 on two production apps'
+route tables (about 190,000 generated requests, with no unexplained differences), and the Async features are tested
+under Falcon. See [PLAN.md](PLAN.md) for the design and what's next.
 
-```sh
-bundle exec reprise routes                     # the app in ./app.rb
-bundle exec reprise routes -r ./boot.rb MyApp  # require files first, and name the app
-bundle exec reprise routes -f compact -g movie # "file:line VERB pattern" lines, filtered
+## Contents
+
+- [Installing](#installing)
+- [Routes](#routes)
+- [Conditions](#conditions)
+- [Params](#params)
+- [Responses](#responses)
+- [Filters](#filters)
+- [Errors](#errors)
+- [Controllers](#controllers)
+- [Settings](#settings)
+- [Templates](#templates)
+- [Middleware and boot](#middleware-and-boot)
+- [Async and Falcon](#async-and-falcon)
+- [Plugins](#plugins): ActionView, Phlex, Sprockets, OpenTelemetry
+- [Telemetry](#telemetry)
+- [Listing routes](#listing-routes)
+- [Reloading in development](#reloading-in-development)
+- [Ractors](#ractors)
+- [Coming from Sinatra](#coming-from-sinatra)
+- [Performance](#performance)
+- [Development](#development)
+
+## Installing
+
+Reprise needs Ruby 4.0 and Rack 3.2, and works with Mustermann 3.1 or 4.
+
+```ruby
+# Gemfile
+gem "reprise-router", github: "travisbell/reprise-router"
 ```
+
+```ruby
+# config.ru
+require "reprise"
+require_relative "app"
+
+run App
+```
+
+Any Rack 3 server runs it. Route timeouts, streaming as it's written, and WebSocket routes need an Async server such as
+[Falcon](https://github.com/socketry/falcon): `bundle exec falcon serve`.
+
+## Routes
+
+A route is a verb, a path pattern, and a block. Routes are tried in the order they're defined, and the first that
+matches answers.
+
+```ruby
+get "/" do
+  "home"
+end
+
+post "/movies" do
+  Movie.create(params[:title])
+  redirect "/movies"
+end
+
+put("/movie/:id")    { ... }
+patch("/movie/:id")  { ... }
+delete("/movie/:id") { ... }
+options("/")         { ... }
+```
+
+`get`, `post`, `put`, `patch`, `delete`, `head`, `options`, `link`, and `unlink` are all there.
+
+**Patterns** are [Mustermann](https://github.com/sinatra/mustermann)'s Sinatra patterns:
+
+| Pattern | Matches | Params |
+|---|---|---|
+| `/movie/:id` | `/movie/550` | `id: "550"` |
+| `/movie/:id/?` | `/movie/550` and `/movie/550/` | `id: "550"` |
+| `/movie/:id.json` | `/movie/550.json` | `id: "550"` |
+| `/files/*` | `/files/a/b.txt` | `splat: ["a/b.txt"]` |
+| `/files/*.*` | `/files/a/b.txt` | `splat: ["a/b", "txt"]` |
+| `/search/?:query?` | `/search`, `/search/`, and `/search/fight` | `query: nil` or `"fight"` |
+| `%r{/movie/(\d+)}` | `/movie/550` | `captures: ["550"]` |
+| `["/movies", "/films"]` | either path | |
+
+A block that takes arguments gets the pattern's params in order, or a regexp's captures:
+
+```ruby
+get("/movie/:id/season/:number") { |id, number| ... }
+get(%r{/movie/(\d+)}) { |id| ... }
+get("/files/*.*") { |path, extension| ... }
+```
+
+**HEAD** is answered by `get` routes, in their place among any `head` routes, with the body left off.
+
+**Several verbs at once:** `route :get, :post, "/session" do ... end` defines the same block for each verb (and for
+each path, if you pass an Array). As with sinatra-contrib's MultiRoute, its GET route doesn't answer HEAD unless you
+list `:head` too.
+
+**Route options** are conditions (below), plus `timeout:` (see [Async and Falcon](#async-and-falcon)):
+
+```ruby
+get "/movie/:id", provides: :json, timeout: 5 do ... end
+```
+
+**Moving on:** `pass` gives up on the current route and tries the next one that matches. `pass { "fallback" }` answers
+with the block if nothing else does.
+
+`route` (in a route, a filter, or a template) is the `Reprise::Route` answering the request, with its `verb`,
+`pattern`, `options`, `owner`, and `source_location`. It's nil in a 404.
+
+## Conditions
+
+Options on a route are conditions: the route matches only if each one does. Conditions run while routes are being
+matched, before any filter, so they see the request but not what filters set.
+
+**`provides:`** matches when the client's `Accept` header accepts one of the given types, and sets the content type to
+the one it prefers:
+
+```ruby
+get "/movie/:id", provides: :json do json(movie) end
+get "/movie/:id", provides: [:html, :xml] do erb :movie end
+```
+
+It follows Sinatra's negotiation exactly, except that `Accept` entries of equal preference keep their order. If a
+before filter sets a content type, a `provides:` route must include it.
+
+**Named conditions** take the option's value as arguments, and run in the request's scope. A condition fails only by
+returning `false`:
+
+```ruby
+condition(:admin) { |level| current_user&.level.to_i >= level }
+
+get "/admin", admin: 2 do ... end
+```
+
+Sinatra-style condition methods work too: a class method that calls `condition { ... }`, used as a route option. So
+does an anonymous `condition { ... }` just before a route, which applies to that route. An unknown option raises when
+the app is finalized.
+
+## Params
+
+`params` holds the query string, the form body (or multipart upload), and the route's pattern params, merged. Its keys
+are Strings, and Symbols work too, including in nested Hashes and in Hashes inside Arrays:
+
+```ruby
+get "/search" do
+  params[:query]               # same as params["query"]
+  params[:filters][:year]      # ?filters[year]=1999
+  params.fetch(:page, 1)
+end
+```
+
+A query or body that can't be parsed answers 400 (`Reprise::BadRequest`).
+
+`request` is a `Reprise::Request` (a `Rack::Request`), with `accept`, `preferred_type`, `accept?(type)`, `secure?`,
+`forwarded?`, `safe?`, and `idempotent?` added. `env` is the Rack env.
+
+## Responses
+
+**What a route returns** becomes the response, as in Sinatra:
+
+| Returns | Response |
+|---|---|
+| a String | the body |
+| an Integer | the status |
+| `[status, body]` | both |
+| `[status, headers, body]` | all three |
+| anything with `#each` | the body, streamed from `#each` |
+
+**Helpers**, in routes, filters, error handlers, and templates:
+
+| Helper | Does |
+|---|---|
+| `halt 404`, `halt "body"`, `halt 401, "no"`, `halt 200, { "x-a" => "1" }, "body"` | stops and responds |
+| `status 201`, `status` | sets or returns the status |
+| `headers "x-a" => "1"`, `headers` | adds headers, or returns them |
+| `body "text"`, `body { lazy }` | sets the body (a block is called when it's read) |
+| `redirect "/movies"`, `redirect url, 301` | redirects and stops: 303 after a non-GET HTTP/1.1 request, 302 otherwise |
+| `content_type :json`, `content_type "text/csv", charset: "utf-8"` | sets the content type, adding the charset to text types |
+| `json(object)` | encodes as JSON (the `json_encoder` setting) and sets the content type |
+| `cache_control :public, max_age: 60` | sets Cache-Control |
+| `expires 300, :public` | sets Expires and Cache-Control's max-age |
+| `send_file path, filename:, disposition:, type:, last_modified:, status:` | sends a file (ranges and HEAD included), or 404s |
+| `attachment "report.csv"` | sets Content-Disposition, and the content type from the extension |
+| `uri("/x")` (`url`, `to`) | an absolute URL, taking proxies into account |
+| `mime_type :json` | the media type for an extension |
+| `not_found "body"`, `error 403, "body"` | stops with that status |
+| `success?`, `redirect?`, `client_error?`, `server_error?`, `not_found?`, ... | checks the status |
+| `session` | `env["rack.session"]`; add a session middleware in config.ru |
+| `logger` | `env["rack.logger"]` |
+| `response` | the `Reprise::Response` (a `Rack::Response`) |
+
+**Cookies:** `cookies` reads the request's cookies and sets new ones, as sinatra-contrib's does:
+
+```ruby
+cookies[:theme]                                   # read
+cookies[:theme] = "dark"                          # set, with the defaults
+cookies.set(:token, value: token, max_age: 3600, same_site: :lax)
+cookies.delete(:theme)
+```
+
+New cookies are `httponly`, `secure` on HTTPS, for path `/`, and for the request's host (none for localhost). The
+`cookie_options` setting adds to those defaults: `set :cookie_options, { same_site: :lax }`.
+
+## Filters
+
+`before` filters run before the matched route's block, and `after` filters after it, including after a `halt`. A
+filter with a pattern runs only when the path matches it, and its pattern's params are in `params` while it runs.
+
+```ruby
+before { @user = current_user }
+before("/admin/*") { halt 401 unless @user&.admin? }
+after { headers "x-served-by" => "reprise" }
+```
+
+Routing happens first, then filters, in definition order. A before filter can read `route`, and can add params for the
+route to use. When no route matches, the app's own filters still run (so error pages get what they set up), and the
+request is a 404.
+
+A filter can take conditions too: `before "/movie/:id", provides: :html do ... end`.
+
+## Errors
+
+Error handlers answer for an exception class or a response status, with the block's return value as the body:
+
+```ruby
+error(Movie::NotFound) { not_found "No such movie" }
+error(404) { erb :"errors/404" }
+error(500..599) { "Something went wrong" }
+error { |boom| "Unexpected: #{boom.message}" }   # any exception
+not_found { erb :"errors/404" }                  # error(404)
+```
+
+- An exception goes to the handler for its class, then its superclasses, then its status. A response status
+  (`halt 404`) goes to that status's handler.
+- The matched controller's handlers come first, then the app's. Handlers for the same key run newest first, and an
+  older one runs only if every newer one returns nil.
+- Handlers run in the request's scope, with its helpers and instance variables. `error` (with no arguments) is the
+  exception being handled, also in `env["reprise.error"]`.
+
+**Statuses:** an exception answers 500, unless it's a `Reprise::Error` with an `http_status`:
+
+```ruby
+class Forbidden < Reprise::Error
+  def http_status = 403
+end
+```
+
+Reprise raises `Reprise::NotFound` (404), `Reprise::BadRequest` (400), and `Reprise::Timeout` (503). With the
+`use_code` setting, a `Reprise::Error`'s `code` gives the status too.
+
+**Settings** for errors:
+
+- `raise_errors` (on in the test environment): an exception no handler answers is raised rather than answered with a
+  500, so tests see it.
+- `dump_errors` (on outside the test environment): a 5xx's exception is logged to `env["rack.errors"]`. Override
+  `self.dump_errors!(exception, env)` on the app to log elsewhere, or to skip expected ones.
+- `x_cascade` (on): a 404 has `x-cascade: pass`, so `Rack::Cascade` can try another app.
+
+## Controllers
+
+A controller is a group of routes with its own filters, error handlers, and helpers, mounted into an app:
+
+```ruby
+class MovieController < Reprise::Controller
+  before("/movie/:id/edit") { require_editor }
+
+  get "/movie/:id" do
+    load_movie
+    erb :"movie/show"
+  end
+
+  error(Movie::NotFound) { not_found "No such movie" }
+
+  private def load_movie = (@movie = Movie.find(params[:id]) or halt 404)
+end
+
+class App < Reprise::App
+  helpers SessionHelpers     # global: every controller has these
+  mount MovieController      # its routes take this place in the app's order
+  mount PersonController
+end
+```
+
+- **Helpers are methods.** A request's scope is an instance of the matched route's controller, so a controller's
+  methods (and its `helpers`) are visible to its own routes and templates only, alongside the app's helpers. `private`,
+  `super`, and `prepend` work as they normally do, and a controller can override a global helper.
+- **The app's helpers are global:** `helpers do ... end` and `helpers SomeModule` on the app reach every controller.
+  `set :helper_isolation, false` makes controllers' `helpers` global too, as Sinatra extensions' are, which is useful
+  while migrating. A controller's plain `def`s stay its own either way.
+- **Filters are scoped:** a controller's filters run only for its own routes. The app's run for every request.
+- **Overlap check:** at boot, Reprise reports any controller filter whose pattern also matches another controller's
+  route, since it won't run for that route as it would in Sinatra. `set :filter_overlap` to `:warn` (the default),
+  `:raise`, or `:ignore`.
+- **Settings are the app's:** controllers read them with `settings`, but can't `set` them or `use` middleware.
+  A controller mounts in one app.
+- **Conditions:** a controller's route options compile in the app's context, so they can use the app's conditions.
+
+`Reprise::App` is itself a controller: an app's own routes, filters, and methods work the same way. That makes an app
+defined across many files, all reopening the same class, a first-class layout:
+
+```ruby
+# routes/movies.rb
+class API < Reprise::App
+  get("/movie/:id") { ... }
+end
+```
+
+`register` takes a Sinatra-style extension (a module, with an optional `registered(app)` hook), or a controller class,
+which it mounts.
+
+## Settings
+
+```ruby
+class App < Reprise::App
+  set :views, File.join(__dir__, "views")
+  set :cache_ttl, 300
+  set(:started_at) { Time.now }     # a block is called each time the setting is read
+  enable :use_code                  # set :use_code, true
+  disable :x_cascade
+
+  configure :production, :staging do
+    set :dump_errors, false
+  end
+
+  get("/ttl") { settings.cache_ttl.to_s }
+end
+```
+
+`set :name, value` defines `settings.name`, `settings.name?`, and `settings.name=`. Setting a Hash setting again merges
+into it. `set` refuses a name that's already one of the app's methods. `configure(*envs)` runs its block when the
+environment matches, at definition time, and `development?`, `production?`, and `test?` check it.
+
+| Setting | Default | |
+|---|---|---|
+| `environment` | `APP_ENV` or `RACK_ENV`, else `:development` | |
+| `raise_errors` | in test | raise exceptions no handler answers ([Errors](#errors)) |
+| `dump_errors` | outside test | log 5xx exceptions |
+| `use_code` | `false` | take a status from a `Reprise::Error`'s `code` |
+| `x_cascade` | `true` | `x-cascade: pass` on 404s |
+| `default_encoding` | `"utf-8"` | the charset added to text content types |
+| `default_content_type` | `"text/html"` | the content type when none is set |
+| `add_charset` | text types, JavaScript, XML | content types that get the charset |
+| `absolute_redirects` | `true` | redirect to absolute URLs |
+| `prefixed_redirects` | `false` | add the script name to redirects |
+| `json_encoder` | `JSON` | anything with `generate` or `encode`, or a method name to call |
+| `json_content_type` | `:json` | `json`'s content type |
+| `helper_isolation` | `true` | keep controllers' `helpers` to themselves |
+| `filter_overlap` | `:warn` | what the boot-time filter check does |
+| `root` | the working directory | |
+| `views` | `root/views` | |
+| `erb` | `{}` | options for every `erb` call |
+| `reload_templates` | in development | recompile templates that change |
+| `precompile_templates` | outside development and test | compile every template at boot |
+| `mustermann_opts` | `{}` | options for every pattern |
+| `matcher` | `:index` | `:trie` is an experimental alternative, on Mustermann 4 |
+| `sinatra_env` | `false` | also set `env["sinatra.route"]` and `env["sinatra.error"]` |
+| `cookie_options` | (none) | defaults for new cookies |
+
+Sinatra's server, static file, session, protection, and logging settings (`:sessions`, `:static`, `:public_folder`,
+`:protection`, `:logging`, `:port`, `:lock`, `:threaded`, and the rest) do nothing in Reprise, and warn when set: use
+Rack middleware in config.ru instead.
+
+## Templates
+
+ERB is built in, compiled with Erubi. A template renders as a method of the request scope, so it sees the route's
+helpers and instance variables.
+
+```ruby
+get "/movie/:id" do
+  @movie = Movie.find(params[:id])
+  erb :"movie/show", layout: :"layouts/main", locals: { cast: @movie.cast }
+end
+```
+
+- `erb :name` renders `views/name.erb`; a String is template source (`erb "<%= 1 + 1 %>"`).
+- A route's template gets `views/layout.erb` as its layout, if that file exists. `layout: :name` picks another, and
+  `layout: false` uses none. Templates rendered inside templates get no layout, and the layout gets the template's
+  locals.
+- `<%= %>` doesn't escape and `<%== %>` does, as in Sinatra. `escape: true` (per call, or in `set :erb`) escapes
+  `<%= %>`.
+- `partial "movie/_card", movie:` renders without a layout, with locals as keywords. `render :erb, :name, options`
+  is Sinatra's form. `capture { ... }` renders a block of template to a String, for helpers that take one.
+- Options per call: `layout:`, `locals:`, `views:`, `scope:`, `content_type:`, `layout_options:`, and Erubi's own.
+  `set :erb, { ... }` sets defaults for every call.
+- Templates are cached per app. `reload_templates` recompiles a file when it changes; `precompile_templates` compiles
+  every `.erb` in the views directory at boot.
+
+Tilt and other template engines aren't included. The [ActionView](#actionview) and [Phlex](#phlex) plugins cover
+ActionView helpers and components.
+
+## Middleware and boot
+
+`use` wraps the app in Rack middleware, outermost first:
+
+```ruby
+class App < Reprise::App
+  use Rack::Deflater
+end
+```
+
+Middleware that belongs to the whole server (static files, sessions, protection, request logging) goes in config.ru:
+
+```ruby
+use Rack::Static, urls: ["/favicon.ico"], root: "public"
+use Rack::Session::Cookie, secret: ENV.fetch("SESSION_SECRET") # the rack-session gem
+run App
+```
+
+**Finalizing:** the first request finalizes the app: its routes, filters, and handlers compile into frozen routers, the
+middleware stack is built, and (with `precompile_templates`) templates compile. After that, nothing more can be
+defined. Call `App.finalize!` at boot (before forking workers, or in Falcon's `warmup`) to do it up front.
+
+`App.routes` and `App.filters` are the finalized tables, mounted controllers included. `env["reprise.route"]` is the
+matched route, and `env["reprise.error"]` the exception handled, for middleware to read.
+
+## Async and Falcon
+
+**`Reprise.current`** is the request scope handling the current request, from anywhere in it: a service object, a Phlex
+component, or a task the route started. It's kept in fiber storage, which Async tasks inherit, so it works across an
+`Async::Barrier`:
+
+```ruby
+get "/movie/:id" do
+  barrier = Async::Barrier.new
+  movie = barrier.async { Movie.find(params[:id]) }
+  credits = barrier.async { Credits.for(params[:id]) }
+  erb :movie, locals: { movie: movie.wait, credits: credits.wait }
+ensure
+  barrier&.stop
+end
+
+class Credits
+  # Called from a Barrier task, it still reaches the request.
+  def self.for(id) = Credit.where(movie_id: id, language: Reprise.current.params[:language])
+end
+```
+
+**Timeouts:** `get "/report", timeout: 5` runs the route under the request's Async task with a timeout. Running over
+raises `Reprise::Timeout` (503), which error handlers can catch. Without an Async server the route runs untimed, with a
+warning once.
+
+**Streaming** uses Rack 3 streaming bodies, which Falcon sends as they're written:
+
+```ruby
+get "/export" do
+  content_type "text/csv"
+  stream do |out|
+    Movie.find_each { out << it.to_csv }
+  end
+end
+```
+
+The block runs once the server sends the response, with the request's params and `Reprise.current`. It ends when the
+block returns or the client disconnects.
+
+**Server-Sent Events:**
+
+```ruby
+get "/updates" do
+  event_stream(retry_after: 3000) do |sse|
+    updates.each { sse.event(:update, it, id: it[:id]) }   # non-String data is sent as JSON
+    sse.comment("still here")
+  end
+end
+```
+
+It sets `text/event-stream`, `cache-control: no-cache`, and `x-accel-buffering: no`.
+
+**WebSockets** are routes, with the [async-websocket](https://github.com/socketry/async-websocket) gem:
+
+```ruby
+websocket "/ws/:channel" do |connection|
+  while (message = connection.read)
+    connection.write(message)
+    connection.flush
+  end
+end
+```
+
+The route matches only upgrade requests; others for the path move on to the next route. The block runs in the
+request's scope, with the route's params, once the connection is upgraded. Options (`handler:`, `protocols:`,
+`extensions:`) go to async-websocket's Rack adapter.
+
+Reprise takes no locks while serving requests: routers and templates are frozen, or replaced atomically. Its Falcon
+specs run with [Async::Safe](https://github.com/socketry/async-safe) enabled.
+
+## Plugins
+
+Plugins are optional, and load only when you use them: `plugin Reprise::Plugins::Name, **options`.
+
+### ActionView
+
+ActionView's helpers in ERB templates (`form_tag`, `tag.div`, `number_to_human`, ...), with block helpers capturing
+their blocks and nothing escaped twice. Needs the actionview gem.
+
+```ruby
+require "reprise/plugins/action_view"
+
+plugin Reprise::Plugins::ActionView, helpers: [
+  ActionView::Helpers::TagHelper, ActionView::Helpers::FormTagHelper, ActionView::Helpers::NumberHelper
+]
+```
+
+The helpers are global. ERB writes to an ActionView-compatible buffer in `@output_buffer`.
+
+### Phlex
+
+[Phlex](https://www.phlex.fun) components in routes and in ERB:
+
+```ruby
+require "reprise/plugins/phlex"
+
+plugin Reprise::Plugins::Phlex
+
+get "/movie/:id" do
+  phlex Pages::Movie.new(movie), layout: :"layouts/main", locals: { title: movie.title }
+end
+```
+
+`render` takes a component too, in routes and templates (`<%= render Card.new(movie) %>`). With a layout, the ERB
+layout `yield`s the component's HTML. Components get the request scope as `context[:reprise]`, and through
+`Reprise.current`. With `rails: true` (phlex-rails and the ActionView plugin), components render through an ActionView
+view context, so phlex-rails' helper adapters work.
+
+### Sprockets
+
+A [Sprockets](https://github.com/rails/sprockets) asset pipeline: settings, helpers, and serving in development.
+
+```ruby
+require "reprise/plugins/sprockets"
+
+assets = Sprockets::Environment.new(root)
+assets.append_path("assets/stylesheets")
+
+plugin Reprise::Plugins::Sprockets,
+  environment: assets,
+  manifest: Sprockets::Manifest.new(assets, "public/assets"),
+  digest: production?
+```
+
+- It sets `assets`, `assets_prefix`, `assets_manifest`, and `assets_digest`, which its helpers read on each call.
+- `asset_path("site.css")` gives the manifest's digest path when digests are on, or else `/assets/site.css`.
+  `asset_exists?` checks without compiling the asset.
+- With `serve:` (the default unless `digest:`), it defines a `get "/assets/*"` route that compiles assets on demand.
+  Routes defined before the plugin under the prefix answer first, and a missing asset gets Sprockets' 404.
+  `Reprise::Plugins::Sprockets::Server` is the middleware form, for config.ru, which answers ahead of the app.
+
+### OpenTelemetry
+
+Names the request's span after its route, and records server errors on it, with
+opentelemetry-instrumentation-rack's span for the request:
+
+```ruby
+require "reprise/plugins/open_telemetry"
+
+plugin Reprise::Plugins::OpenTelemetry, skip_errors: [MyApp::Maintenance]
+```
+
+The span gets `http.route` (`/movie/:id`) and the name `GET /movie/:id`, unless `span_name:` (a callable taking the
+route) says otherwise. A 5xx's exception is recorded on the span, which is marked as an error, unless the exception is
+one of `skip_errors` (or a subclass).
 
 ## Telemetry
 
-Opt-in, and not loaded by `require "reprise"`. Request metrics (`app.requests`, `app.request.duration`) and an access
-log line per request, labelled by route pattern (at info, warn for a 4xx, and error for a 5xx); a stall detector that logs when the event loop is blocked, naming the
-requests in flight; and the loop's lag (`reactor.lag`). Metrics go through the OpenTelemetry metrics API, and are no-ops
-until you configure an SDK meter provider. Logs go through Console.
+Opt-in, and not loaded by `require "reprise"`:
+
+- **Request metrics:** `app.requests` and `app.request.duration`.
+- **An access log line per request**, labelled by route pattern, at info (warn for a 4xx, and error for a 5xx).
+- **A stall detector** that logs when the event loop is blocked, naming the requests in flight.
+- **Reactor lag:** how late the event loop resumes (`reactor.lag`).
+
+Metrics go through the OpenTelemetry metrics API, and are no-ops until you configure an SDK meter provider. Logs go
+through Console.
 
 ```ruby
 require "reprise/plugins/telemetry"
@@ -74,15 +623,42 @@ use OpenTelemetry::Instrumentation::Rack::Middlewares::Stable::TracerMiddleware
 use Reprise::Telemetry::Requests # below the tracer: its log line carries the trace id, and is written after the span ends
 ```
 
+`Reprise::Telemetry::Requests` takes these options:
+
+| Option | |
+|---|---|
+| `filter:` | which requests to record |
+| `labels:` | extra labels for the counter and the log line |
+| `fields:` | extra fields for the log line only |
+| `skip_paths:` | paths not to record |
+| `histogram_labels:` | which labels the duration histogram gets |
+| `log:` | `false` for metrics only, or a callable taking `(env, message, fields)` |
+| `log_sample:` | the percentage of requests to log; every 5xx is logged |
+| `request_id:` | the env key holding the request id |
+| `query_filter:` | which query params to filter out of the log line |
+
+`Requests.log_level(status)` gives a custom `log:` callable the same choice of level.
+
 It needs the `opentelemetry-metrics-api` and `console` gems (Falcon brings `console`). Give your meter provider Reprise's
 histogram buckets with `Reprise::Telemetry::Metrics.add_views(provider)`.
+
+## Listing routes
+
+```sh
+bundle exec reprise routes                     # the app in ./app.rb
+bundle exec reprise routes -r ./boot.rb MyApp  # require files first, and name the app
+bundle exec reprise routes -f compact -g movie # "file:line VERB pattern" lines, filtered
+```
+
+Routes are listed in the order they're tried, with each one's controller, `provides`, and source location.
 
 ## Reloading in development
 
 `Reprise::Reloader` reloads the app's code when it changes, before the next request. It waits for the requests in
 flight to finish, and holds new ones until the reload is done, so no request sees half-loaded code. It reloads with a
-Zeitwerk loader, and can also reload an app defined in plain required files, such as one class reopened across several
-files. It needs no file-watcher thread: each request checks the files the app has loaded, and their directories.
+[Zeitwerk](https://github.com/fxn/zeitwerk) loader, and can also reload an app defined in plain required files, such as
+one class reopened across several files. It needs no file-watcher thread: each request checks the files the app has
+loaded, and their directories.
 
 ```ruby
 # config.ru
@@ -96,7 +672,8 @@ end
 ```
 
 The loader needs `enable_reloading` before its `setup`. A reload that raises (a syntax error, say) answers with the
-error, and is tried again with the next request. config.ru and its middleware aren't reloaded.
+error, and is tried again with the next request. config.ru and its middleware aren't reloaded. The stall detector
+doesn't report the time spent loading code.
 
 ## Ractors
 
@@ -120,6 +697,47 @@ uses, or the path to the object that can't be frozen.
 - Rack's media types and other globals are frozen for the whole process, so register media types before.
 - The Reloader, telemetry, and the Sprockets plugin don't run in other Ractors yet.
 
+## Coming from Sinatra
+
+Most route code moves over unchanged. What changes:
+
+- **Declaring and mounting:** `class App < Reprise::App` for `Sinatra::Base`, and `class X < Reprise::Controller` with
+  `mount X` for an extension of routes. `register` still works, and mounts controller classes.
+- **Helpers and filters are scoped to their controller** (see [Controllers](#controllers)). `set :helper_isolation,
+  false` gives Sinatra's global helpers while you migrate, and the overlap check reports filters that scoping changes.
+- **Routing happens before filters.** Conditions run while routes are matched, so they don't see what filters set, and a
+  controller's filters don't run on a 404.
+- **Errors:** `Reprise::NotFound` for `Sinatra::NotFound`, and `env["reprise.error"]` (or `error` in a handler) for
+  `env["sinatra.error"]`. `set :sinatra_env, true` also sets `env["sinatra.route"]` and `env["sinatra.error"]` for
+  middleware written for Sinatra.
+- **Multi-verb routes and `json`** are built in, replacing sinatra-contrib's MultiRoute and JSON. So are `cookies` and
+  `configure`.
+- **Settings** are methods on the app (`settings.views`). Server, static file, session, protection, and logging
+  settings are gone; use Rack middleware in config.ru.
+- **Not included:** classic (top-level) apps, `run!`, Tilt and non-ERB engines, inline templates, `forward`, `back`,
+  `etag`, and `last_modified` (use `Rack::ConditionalGet` and `Rack::ETag`), and the `host_name`, `user_agent`, and
+  `agent` conditions.
+- **Small differences:** `Accept` entries of equal preference keep their order in `provides:`. A filter's `:id` param
+  doesn't replace the route's own, and a regexp filter's `captures` don't leak into the route.
+
+## Performance
+
+Microseconds per request through a full Rack call (allocations per request), on Ruby 4.0.9 with YJIT, Apple Silicon.
+Each framework is used the way it's meant to be; the setup and the harness are in [bench/frameworks](bench/frameworks).
+
+| Workload | Reprise | Sinatra 4.2 | Roda | Hanami |
+|---|---|---|---|---|
+| hello | 1.63 (13) | 4.94 (56) | **0.72** (11) | 14.65 (227) |
+| params | 3.54 (24) | 7.60 (84) | **2.73** (36) | 13.18 (174) |
+| filters | 3.38 (23) | 8.75 (101) | **1.29** (18) | 16.70 (247) |
+| 1,000 routes | 2.51 (15.5) | 162.29 (1,964) | **1.15** (15.5) | 15.48 (231) |
+| 404 | 2.31 (13.3) | 350.71 (4,080) | 0.93 (12) | **0.96** (7.3) |
+| ERB | **6.04** (39) | 13.80 (122) | 8.00 (48) | n/a |
+
+Reprise is 2–3× faster than Sinatra on small apps, and much faster with many routes, since Sinatra tries routes one by
+one and a 404 tries them all. Roda is faster outside templates. Reprise spends what's left on Sinatra's model: filters,
+conditions, error handlers, `pass`, controller scopes, and case-insensitive headers.
+
 ## Development
 
 ```sh
@@ -127,7 +745,7 @@ bundle install
 bundle exec rspec
 ASYNC_SAFE=1 bundle exec rspec spec/falcon   # Falcon integration specs, checking for unsafe concurrent access
 bundle exec rubocop
-bundle exec rake spike   # routing and dispatch parity with Sinatra, see spike/README.md
+bundle exec rake spike                       # routing and dispatch parity with Sinatra, see spike/README.md
 ```
 
-Requires Ruby 4.0.
+CI also runs the specs on Mustermann 3.1: `MUSTERMANN_VERSION="~> 3.1" bundle install`.
