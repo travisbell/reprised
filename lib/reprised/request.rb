@@ -25,7 +25,7 @@ module Reprised
     # would, without its unescaping; anything else goes to Rack's parser.
     def GET # rubocop:disable Naming/MethodName -- overrides Rack::Request#GET
       get_header(Rack::RACK_REQUEST_QUERY_HASH) || set_header(Rack::RACK_REQUEST_QUERY_HASH, plain_query || super)
-    rescue Rack::Utils::ParameterTypeError, Rack::Utils::InvalidParameterError => error
+    rescue Rack::BadRequest => error # Rack's parse errors: conflicting params, bad encoding, too deep, too many
       raise BadRequest, "Invalid query parameters: #{Rack::Utils.escape_html(error.message)}"
     end
 
@@ -38,13 +38,13 @@ module Reprised
     # Whether the request has a body Rack would parse into params.
     def form_body? = form_data? || parseable_data?
 
-    # Rack's params, with parse failures raised as BadRequest (400) rather than a 500.
+    # Rack's params, with parse failures raised as BadRequest (400) rather than a 500: every error Rack marks as a bad
+    # request (query and form errors, multipart errors, and their limits), and a multipart body that ends early.
     def params
       super
-    rescue Rack::Utils::ParameterTypeError, Rack::Utils::InvalidParameterError => error
-      raise BadRequest, "Invalid query parameters: #{Rack::Utils.escape_html(error.message)}"
-    rescue EOFError => error
-      raise BadRequest, "Invalid multipart/form-data: #{Rack::Utils.escape_html(error.message)}"
+    rescue Rack::BadRequest, EOFError => error
+      kind = error.is_a?(EOFError) || error.class.name.to_s.start_with?("Rack::Multipart") ? "multipart/form-data" : "query parameters"
+      raise BadRequest, "Invalid #{kind}: #{Rack::Utils.escape_html(error.message)}"
     end
 
     private

@@ -141,6 +141,80 @@ RSpec.describe "Routing" do
 
       expect(status).to eq(400)
     end
+
+    it "are a 400, through the error handlers, for every error Rack marks as a bad request" do
+      mock_app do
+        get("/") { "" }
+        post("/") { "" }
+        error(400) { "bad: #{error.message[/\AInvalid [^:]+/]}" }
+      end
+      parts = (1..(Rack::Utils.multipart_file_limit + 1)).map do |n|
+        "--AaB03x\r\nContent-Disposition: form-data; name=\"f#{n}\"; filename=\"f#{n}.txt\"\r\n\r\nx\r\n"
+      end
+
+      get "/?#{"a" + ("[b]" * 200)}=1" # nested too deep
+      expect([status, body]).to eq([400, "bad: Invalid query parameters"])
+
+      post "/", parts.join + "--AaB03x--\r\n", "CONTENT_TYPE" => "multipart/form-data; boundary=AaB03x" # too many files
+      expect([status, body]).to eq([400, "bad: Invalid multipart/form-data"])
+
+      post "/", "--AaB03x\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nvalue", "CONTENT_TYPE" => "multipart/form-data; boundary=AaB03x"
+      expect([status, body]).to eq([400, "bad: Invalid multipart/form-data"]) # ends early
+    end
+  end
+
+  describe "method_override" do
+    def movie_app(override: true)
+      mock_app do
+        set :method_override, override
+        post("/movie") { "post" }
+        delete("/movie") { "delete #{env["rack.methodoverride.original_method"]}" }
+        patch("/movie") { "patch" }
+      end
+    end
+
+    it "takes the method from a POST's _method form param, as Sinatra's setting does" do
+      movie_app
+
+      post "/movie", _method: "delete"
+
+      expect(body).to eq("delete POST")
+    end
+
+    it "takes it from X-HTTP-Method-Override when there's no _method" do
+      movie_app
+
+      post "/movie", {}, "HTTP_X_HTTP_METHOD_OVERRIDE" => "PATCH"
+
+      expect(body).to eq("patch")
+    end
+
+    it "leaves a method that isn't an HTTP method, a _method in the query, and a GET as they are" do
+      movie_app
+
+      post "/movie", _method: "explode"
+      expect(body).to eq("post")
+      post "/movie?_method=delete"
+      expect(body).to eq("post")
+      get "/movie", _method: "delete"
+      expect(status).to eq(404)
+    end
+
+    it "is off by default" do
+      movie_app(override: false)
+
+      post "/movie", _method: "delete"
+
+      expect(body).to eq("post")
+    end
+
+    it "answers a body that doesn't parse with a 400, rather than overriding" do
+      movie_app
+
+      post "/movie", "a[]=1&a[b]=2&_method=delete", "CONTENT_TYPE" => "application/x-www-form-urlencoded"
+
+      expect(status).to eq(400)
+    end
   end
 
   it "matches an optional trailing slash" do

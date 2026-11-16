@@ -11,7 +11,7 @@ module Reprised
 
     # Sinatra settings Reprised doesn't act on: each belongs in config.ru middleware or is gone. Setting one warns.
     IGNORED_SETTINGS = [
-      :app_file, :bind, :empty_path_info, :host_authorization, :lock, :logging, :method_override, :port, :protection,
+      :app_file, :bind, :empty_path_info, :host_authorization, :lock, :logging, :port, :protection,
       :public_dir, :quiet, :run, :server, :session_secret, :session_store,
       :sessions, :show_exceptions, :strict_paths, :threaded, :traps
     ].freeze

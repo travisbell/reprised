@@ -182,7 +182,9 @@ get "/search" do
 end
 ```
 
-A query or body that can't be parsed answers 400 (`Reprised::BadRequest`).
+A query or body that can't be parsed answers 400 (`Reprised::BadRequest`), through the error handlers: that's every error
+Rack marks as a bad request (including its limits on nesting, params, and multipart parts) and a multipart body that
+ends early.
 
 `request` is a `Reprised::Request` (a `Rack::Request`), with `accept`, `preferred_type`, `accept?(type)`, `secure?`,
 `forwarded?`, `safe?`, and `idempotent?` added. `env` is the Rack env.
@@ -401,6 +403,7 @@ environment matches, at definition time, and `development?`, `production?`, and 
 | `add_charset` | text types, JavaScript, XML | content types that get the charset |
 | `absolute_redirects` | `true` | redirect to absolute URLs |
 | `prefixed_redirects` | `false` | add the script name to redirects |
+| `method_override` | `false` | a POST's `_method` form param (or `X-HTTP-Method-Override`) names its method, as `Rack::MethodOverride` does |
 | `json_encoder` | `JSON` | anything with `generate` or `encode`, or a method name to call |
 | `json_content_type` | `:json` | `json`'s content type |
 | `helper_isolation` | `true` | keep controllers' `helpers` to themselves |

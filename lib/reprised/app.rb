@@ -38,7 +38,8 @@ module Reprised
     #                                                      are Procs by default, evaluated on every read).
     Runtime = Data.define(
       :before, :after, :status_handlers, :sinatra_env, :scope_classes,
-      :use_code, :dump_errors, :x_cascade, :raise_errors, :public_folder, :static_cache_control, :static_headers
+      :use_code, :dump_errors, :x_cascade, :raise_errors, :public_folder, :static_cache_control, :static_headers,
+      :method_override
     )
 
     FINALIZE_LOCK = Mutex.new
@@ -247,7 +248,8 @@ module Reprised
           x_cascade: settings.x_cascade? ? true : false, raise_errors: settings.raise_errors? ? true : false,
           # Worked out once, at boot, rather than checking the folder exists on each request as Sinatra does.
           public_folder: settings.static? && settings.public_folder ? File.expand_path(settings.public_folder).freeze : nil,
-          static_cache_control: settings.static_cache_control || nil, static_headers: settings.static_headers || {}
+          static_cache_control: settings.static_cache_control || nil, static_headers: settings.static_headers || {},
+          method_override: settings.method_override? ? true : false
         )
       end
 
@@ -338,6 +340,8 @@ module Reprised
     set :static, proc { public_folder && File.exist?(public_folder) }
     set :static_cache_control, false
     set :static_headers, {}
+    # A POST's _method form param (or X-HTTP-Method-Override header) names the method the routes see, as in Sinatra.
+    set :method_override, false
     set :prefixed_redirects, false
     set :mustermann_opts, {}
     set :matcher, :index

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "rack/method_override"
 require "uri"
 
 module Reprised
@@ -97,6 +98,7 @@ module Reprised
         request.GET
       end
       request_params&.each { |key, value| params[key] = value.is_a?(String) ? force_encoding(value) : value }
+      override_method! if @runtime.method_override && env["REQUEST_METHOD"] == "POST"
       if @runtime.public_folder && (env["REQUEST_METHOD"] == "GET" || env["REQUEST_METHOD"] == "HEAD") && (file = static_file)
         @static = true
         return invoke { static!(file) }
@@ -161,6 +163,19 @@ module Reprised
     end
 
     def path = env["PATH_INFO"].to_s
+
+    # Sinatra's method_override, by Rack::MethodOverride's rules: a POST's _method form param, or else its
+    # X-HTTP-Method-Override header, names the request's method, if it's an HTTP method. The original is kept in
+    # env["rack.methodoverride.original_method"]. It's applied once the params are parsed, so a body that doesn't parse
+    # is a 400, as any other.
+    def override_method!
+      method = (request.POST["_method"] if request.form_body?) || env["HTTP_X_HTTP_METHOD_OVERRIDE"]
+      method = method.to_s.upcase
+      return unless Rack::MethodOverride::HTTP_METHODS.include?(method)
+
+      env[Rack::RACK_METHODOVERRIDE_ORIGINAL_METHOD] = env["REQUEST_METHOD"]
+      env["REQUEST_METHOD"] = method
+    end
 
     # The file in the public folder the path names, as Sinatra finds it: unescaped, with no null bytes, and inside the
     # folder.
