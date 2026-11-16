@@ -478,6 +478,19 @@ use Rack::Session::Cookie, secret: ENV.fetch("SESSION_SECRET") # the rack-sessio
 run App
 ```
 
+**Behind a proxy:** Rack takes the request's scheme from `X-Forwarded-Proto` and `Forwarded`. For a proxy that sends
+its own header instead, such as CloudFront, `Reprised::ForwardedScheme` makes the request HTTPS when that header says
+so, for `request.scheme`, redirects and URLs, and middleware that read `rack.url_scheme` (OpenTelemetry's `url.scheme`),
+whatever forwarded headers the client sent:
+
+```ruby
+require "reprised/forwarded_scheme"
+
+use Reprised::ForwardedScheme, header: "CloudFront-Forwarded-Proto" # ahead of sessions, protection, and tracing
+```
+
+Only use it behind a proxy that sets the header itself.
+
 **Finalizing:** the first request finalizes the app: its routes, filters, and handlers compile into frozen routers, the
 middleware stack is built, and (with `precompile_templates`) templates compile. After that, nothing more can be
 defined. Call `App.finalize!` at boot (before forking workers, or in Falcon's `warmup`) to do it up front.
