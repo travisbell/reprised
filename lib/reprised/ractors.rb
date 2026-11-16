@@ -312,8 +312,12 @@ module Reprised
         ::Mustermann::Pattern.prepend(Unescape) unless ::Mustermann::Pattern < Unescape
       end
 
-      # Builds what a router's patterns build lazily when matching, and drops their AST cache (a WeakMap, which can't
-      # be shared): it isn't needed once they're built.
+      # Mustermann 4's per-pattern caches of matches, as WeakKeyMaps.
+      MATCH_CACHES = [:@match_cache, :@peek_cache].freeze
+
+      # Builds what a router's patterns build lazily when matching, and drops their caches, which can't be shared: the
+      # AST cache (a WeakMap), which isn't needed once they're built, and Mustermann 4's match caches (WeakKeyMaps),
+      # which they match without (as `cache: false` does).
       def self.prepare(router, seen = {}.compare_by_identity)
         return if seen[router] || router.is_a?(Module) || Ractor.shareable?(router)
 
@@ -322,6 +326,11 @@ module Reprised
           router.send(:param_converters) if router.respond_to?(:param_converters, true)
           router.send(:except_regexp) if router.respond_to?(:except_regexp, true)
           router.remove_instance_variable(:@ast_cache) if router.instance_variable_defined?(:@ast_cache)
+          MATCH_CACHES.each do |name|
+            next unless router.instance_variable_defined?(name) && !Ractor.shareable?(router.instance_variable_get(name))
+
+            router.instance_variable_set(name, false)
+          end
         end
         router.instance_variables.each { prepare(router.instance_variable_get(it), seen) }
         case router
