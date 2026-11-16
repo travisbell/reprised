@@ -298,6 +298,23 @@ Reprised raises `Reprised::NotFound` (404), `Reprised::BadRequest` (400), and `R
   `self.dump_errors!(exception, env)` on the app to log elsewhere, or to skip expected ones.
 - `x_cascade` (on): a 404 has `x-cascade: pass`, so `Rack::Cascade` can try another app.
 
+**The exception page:** in development (`show_exceptions`, on there), a 5xx's exception gets Reprised's exception
+page rather than the app's error handlers, as Sinatra's `show_exceptions` does:
+
+- The exception and its causes, with Ruby's error highlighting, and the matched route and its controller.
+- The backtrace, with the source around each frame (the app's first; gems' are hidden until you ask), each linked to
+  your editor with `set :editor, :vscode` (or `:cursor`, `:zed`, `:rubymine`, `:textmate`, `:sublime`, `:macvim`, or a
+  URL template with `%{file}` and `%{line}`).
+- The local variables, and instance variables, where it was raised. A TracePoint on `:raise`, on only while the page is,
+  keeps the binding of the frame that raised, with no gem needed (Better Errors' `binding_of_caller` gets every frame's).
+  An exception raised inside Ruby itself (`Integer()`, say) has none of the app's.
+- The request: params, headers, session keys, and the Rack env, with passwords, tokens, cookies, and the session
+  masked. A Copy as text button copies it all, and XHR and JSON requests get it as plain text.
+
+It's shown only to requests from `show_exceptions_from` (by `REMOTE_ADDR`, loopback by default):
+`set :show_exceptions_from, ["127.0.0.0/8", "::1/128", "172.16.0.0/12"]` adds Docker's networks.
+`set :show_exceptions, :after_handler` lets the app's handlers answer first, and shows the page when none does.
+
 ## Controllers
 
 A controller is a group of routes with its own filters, error handlers, and helpers, mounted into an app:
@@ -395,6 +412,9 @@ environment matches, at definition time, and `development?`, `production?`, and 
 |---|---|---|
 | `environment` | `APP_ENV` or `RACK_ENV`, else `:development` | |
 | `raise_errors` | in test | raise exceptions no handler answers ([Errors](#errors)) |
+| `show_exceptions` | in development | the exception page for a 5xx's exception, or `:after_handler` |
+| `show_exceptions_from` | loopback | the addresses the exception page shows to |
+| `editor` | none | the exception page's links to files: `:vscode`, `:rubymine`, ..., or a URL template |
 | `dump_errors` | outside test | log 5xx exceptions |
 | `use_code` | `false` | take a status from a `Reprised::Error`'s `code` |
 | `x_cascade` | `true` | `x-cascade: pass` on 404s |
@@ -850,6 +870,9 @@ Most route code moves over unchanged. What changes:
   `Helpers::Session` module for the `Session` model).
 - **Routing happens before filters.** Conditions run while routes are matched, so they don't see what filters set, and a
   controller's filters don't run on a 404.
+- **The exception page:** `show_exceptions` is Reprised's own page, shown before the error handlers in development,
+  as Sinatra's is. A middleware such as Better Errors only sees exceptions the app raises: with `show_exceptions` off,
+  set `raise_errors` in development for it, or a catch-all `error do` handler will answer them first.
 - **Errors:** `Reprised::NotFound` for `Sinatra::NotFound`, and `env["reprised.error"]` (or `error` in a handler) for
   `env["sinatra.error"]`. `set :sinatra_env, true` also sets `env["sinatra.route"]` and `env["sinatra.error"]` for
   middleware written for Sinatra. The [OpenTelemetry](#opentelemetry) plugin replaces

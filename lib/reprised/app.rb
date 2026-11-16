@@ -39,7 +39,7 @@ module Reprised
     Runtime = Data.define(
       :before, :after, :status_handlers, :sinatra_env, :scope_classes,
       :use_code, :dump_errors, :x_cascade, :raise_errors, :public_folder, :static_cache_control, :static_headers,
-      :method_override
+      :method_override, :show_exceptions, :show_exceptions_from, :editor, :root
     )
 
     FINALIZE_LOCK = Mutex.new
@@ -235,6 +235,13 @@ module Reprised
       end
 
       def build_runtime
+        show_exceptions = settings.show_exceptions
+        show_exceptions = show_exceptions == :after_handler ? :after_handler : (show_exceptions ? true : false)
+        if show_exceptions
+          # Loaded, and the bindings captured, only where the page shows: in development.
+          require_relative "exception_page"
+          ExceptionPage.capture_bindings!
+        end
         unconditional = ->(filters) do
           filters.map(&:action).freeze if filters.all? { it.path.nil? && it.conditions.empty? && it.owner <= App }
         end
@@ -249,7 +256,9 @@ module Reprised
           # Worked out once, at boot, rather than checking the folder exists on each request as Sinatra does.
           public_folder: settings.static? && settings.public_folder ? File.expand_path(settings.public_folder).freeze : nil,
           static_cache_control: settings.static_cache_control || nil, static_headers: settings.static_headers || {},
-          method_override: settings.method_override? ? true : false
+          method_override: settings.method_override? ? true : false,
+          show_exceptions:, show_exceptions_from: (ExceptionPage.ranges(settings.show_exceptions_from) if show_exceptions),
+          editor: settings.editor, root: settings.root
         )
       end
 
@@ -340,6 +349,13 @@ module Reprised
     set :static, proc { public_folder && File.exist?(public_folder) }
     set :static_cache_control, false
     set :static_headers, {}
+    # In development, a 5xx's exception gets the exception page (Reprised::ExceptionPage) rather than the error handlers,
+    # for requests from these addresses. :after_handler shows it only when no handler answers.
+    set :show_exceptions, proc { development? }
+    set :show_exceptions_from, ["127.0.0.0/8", "::1/128"]
+    # The exception page's links to files: :vscode, :cursor, :zed, :rubymine, :textmate, :sublime, :macvim, or a URL
+    # template with %{file} and %{line}.
+    set :editor, nil
     # A POST's _method form param (or X-HTTP-Method-Override header) names the method the routes see, as in Sinatra.
     set :method_override, false
     set :prefixed_redirects, false

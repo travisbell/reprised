@@ -1,0 +1,116 @@
+<%- error = page.exception -%>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><%= error.class %> at <%= page.request.path %></title>
+<style>
+  :root { color-scheme: light dark; --bg: #fafaf9; --panel: #fff; --ink: #1c1917; --muted: #78716c; --line: #e7e5e4; --accent: #b91c1c; --hit: #fef3c7; --code: #f5f5f4; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1c1917; --panel: #262322; --ink: #f5f5f4; --muted: #a8a29e; --line: #3f3a37; --accent: #f87171; --hit: #4a3a12; --code: #201d1b; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 20px 28px; background: var(--panel); border-bottom: 3px solid var(--accent); }
+  h1 { margin: 0 0 4px; font-size: 22px; color: var(--accent); }
+  h2 { font-size: 15px; margin: 28px 0 10px; }
+  main { padding: 4px 28px 48px; max-width: 1300px; }
+  pre, code { font: 12.5px/1.45 ui-monospace, "SF Mono", Menlo, monospace; }
+  .message { white-space: pre-wrap; font-size: 15px; margin: 6px 0 0; }
+  .where { color: var(--muted); margin-top: 8px; }
+  .where a, a { color: inherit; }
+  .cause { margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--line); }
+  .cause .name { color: var(--accent); font-weight: 600; }
+  button { font: inherit; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); cursor: pointer; }
+  .actions { float: right; display: flex; gap: 8px; align-items: center; }
+  .actions label { color: var(--muted); font-size: 13px; }
+  details.frame { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; margin: 4px 0; }
+  details.frame > summary { padding: 6px 10px; cursor: pointer; list-style: none; display: flex; gap: 10px; align-items: baseline; }
+  details.frame > summary::-webkit-details-marker { display: none; }
+  details.frame.app > summary .path { font-weight: 600; }
+  details.frame:not(.app) > summary { color: var(--muted); }
+  body.hide-gems details.frame:not(.app) { display: none; }
+  .label { color: var(--muted); }
+  .frame-source { margin: 0; padding: 8px 0; background: var(--code); border-top: 1px solid var(--line); overflow-x: auto; }
+  .frame-source span { display: block; padding: 0 12px; white-space: pre; }
+  .frame-source span.hit { background: var(--hit); }
+  .frame-source i { display: inline-block; width: 44px; color: var(--muted); font-style: normal; user-select: none; }
+  table { border-collapse: collapse; width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  td { padding: 5px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+  td:first-child { width: 22%; color: var(--muted); white-space: nowrap; }
+  td pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body class="hide-gems">
+<header>
+  <div class="actions">
+    <label><input type="checkbox" id="gems"> Gem frames</label>
+    <button id="copy" type="button">Copy as text</button>
+  </div>
+  <h1><%= error.class %></h1>
+  <pre class="message"><%= page.message(error) %></pre>
+  <div class="where">
+    <%= page.request.request_method %> <%= page.request.path %>
+    <%- if (route = page.route) -%>
+      &middot; <code><%= route %></code> in <%= route.owner %>
+      <%- if route.source_location -%>
+        <%- frame = page.frame(*route.source_location, nil) -%>
+        (<%- if (url = page.editor_url(frame)) -%><a href="<%= url %>"><%= page.relative(frame.path) %>:<%= frame.line %></a><%- else -%><%= page.relative(frame.path) %>:<%= frame.line %><%- end -%>)
+      <%- end -%>
+    <%- end -%>
+  </div>
+  <%- page.chain.drop(1).each do |cause| -%>
+    <div class="cause"><span class="name">Caused by <%= cause.class %></span><pre class="message"><%= page.message(cause) %></pre></div>
+  <%- end -%>
+</header>
+<main>
+  <%- locals = page.locals(error) -%>
+  <%- if locals.any? -%>
+    <h2>Local variables where it was raised<%- if (at = page.raised_at(error)) -%> <span class="label">(<%= page.relative(at[0]) %>:<%= at[1] %>)</span><%- end -%></h2>
+    <table><%- locals.each do |name, value| -%><tr><td><code><%= name %></code></td><td><pre><%= value %></pre></td></tr><%- end -%></table>
+  <%- end -%>
+
+  <%- page.chain.each_with_index do |cause, index| -%>
+    <h2>Backtrace<%= " of #{cause.class}" if index.positive? %></h2>
+    <%- opened = false -%>
+    <%- page.frames(cause).each do |frame| -%>
+      <%- open = frame.app && !opened && (opened = true) -%>
+      <details class="frame<%= " app" if frame.app %>"<%= " open" if open %>>
+        <summary>
+          <code class="path"><%= page.relative(frame.path) %>:<%= frame.line %></code>
+          <code class="label"><%= frame.label %></code>
+          <%- if (url = page.editor_url(frame)) -%><a href="<%= url %>" onclick="event.stopPropagation()">open</a><%- end -%>
+        </summary>
+        <%- if (lines = page.source(frame)) -%>
+          <pre class="frame-source"><%- lines.each do |number, text| -%><span<%== ' class="hit"' if number == frame.line %>><i><%= number %></i><%= text %></span><%- end -%></pre>
+        <%- end -%>
+      </details>
+    <%- end -%>
+  <%- end -%>
+
+  <h2>Request</h2>
+  <table>
+    <tr><td>URL</td><td><code><%= page.request.request_method %> <%= page.url %></code></td></tr>
+    <%- if (route = page.route) -%><tr><td>Route</td><td><code><%= route %></code> in <%= route.owner %></td></tr><%- end -%>
+    <tr><td>Params</td><td><%- if page.params.empty? -%><span class="empty">none</span><%- else -%><pre><%= page.params_text %></pre><%- end -%></td></tr>
+    <tr><td>Session keys</td><td><%- if page.session_keys.empty? -%><span class="empty">none</span><%- else -%><code><%= page.session_keys.join(", ") %></code><%- end -%></td></tr>
+  </table>
+
+  <h2>Headers</h2>
+  <table><%- page.headers.each do |name, value| -%><tr><td><%= name %></td><td><pre><%= value %></pre></td></tr><%- end -%></table>
+
+  <details><summary><h2 style="display:inline">Rack env</h2></summary>
+    <table><%- page.rack_env.each do |name, value| -%><tr><td><code><%= name %></code></td><td><pre><%= value %></pre></td></tr><%- end -%></table>
+  </details>
+</main>
+<textarea id="text" hidden><%= page.text %></textarea>
+<script>
+  document.getElementById("gems").addEventListener("change", (event) => document.body.classList.toggle("hide-gems", !event.target.checked));
+  document.getElementById("copy").addEventListener("click", async (event) => {
+    await navigator.clipboard.writeText(document.getElementById("text").value);
+    event.target.textContent = "Copied";
+    setTimeout(() => { event.target.textContent = "Copy as text"; }, 1500);
+  });
+</script>
+</body>
+</html>

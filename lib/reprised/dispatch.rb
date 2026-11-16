@@ -164,6 +164,19 @@ module Reprised
 
     def path = env["PATH_INFO"].to_s
 
+    # The exception page's body for +boom+, with its content type set, or nil for a client it isn't shown to (or if it
+    # can't render, which leaves the exception to the error handlers).
+    def exception_page(boom)
+      return unless ExceptionPage.allowed?(env, @runtime.show_exceptions_from)
+
+      body, type = ExceptionPage.new(boom, scope, root: @runtime.root, editor: @runtime.editor).render(request)
+      scope.content_type(type)
+      body
+    rescue StandardError => error
+      env["rack.errors"]&.puts("Reprised: the exception page failed: #{error.class}: #{error.message}")
+      nil
+    end
+
     # Sinatra's method_override, by Rack::MethodOverride's rules: a POST's _method form param, or else its
     # X-HTTP-Method-Override header, names the request's method, if it's an HTTP method. The original is kept in
     # env["rack.methodoverride.original_method"]. It's applied once the params are parsed, so a body that doesn't parse
@@ -357,6 +370,9 @@ module Reprised
 
       if scope.server_error?
         dump_errors!(boom) if @runtime.dump_errors
+        if @runtime.show_exceptions == true && (page = exception_page(boom))
+          return page
+        end
       elsif scope.not_found?
         scope.headers["x-cascade"] = "pass" if @runtime.x_cascade
       end
@@ -375,6 +391,9 @@ module Reprised
       end
 
       return unless scope.server_error?
+      if @runtime.show_exceptions == :after_handler && (page = exception_page(boom))
+        return page
+      end
       raise boom if @runtime.raise_errors
 
       error_block!(Exception, boom)

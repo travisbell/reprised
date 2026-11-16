@@ -208,7 +208,8 @@ end
 | `configure(*envs) { }`: runs the block when `RACK_ENV` matches, at class-definition time | `set :public_folder`/`:static` (use `Rack::Static` in `config.ru`) |
 | `raise_errors` setting (re-raise in test instead of handling), `Reprised::NotFound` (replaces `Sinatra::NotFound`) | |
 
-Static files, protection, sessions, and the dev error page belong in `config.ru` middleware.
+Protection, sessions, and other server concerns belong in `config.ru` middleware. (Reprised has since gained its own
+static file serving and development exception page, as Sinatra's.)
 
 `halt` and `pass` stay `throw`/`catch` based. It's fast, and it's what route bodies already expect.
 
