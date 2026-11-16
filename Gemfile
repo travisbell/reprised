@@ -14,6 +14,7 @@ end
 # Optional integrations, exercised by the specs.
 group :test do
   gem "actionview", "~> 8.1"
+  gem "i18n", "~> 1.14"
   gem "phlex", "~> 2.4"
   gem "phlex-rails", "~> 2.4"
   gem "sprockets", "~> 4.2"

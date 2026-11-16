@@ -49,7 +49,7 @@ WebSockets, ActionView forms, and Phlex components. `bundle exec rake demos` run
 - [Templates](#templates)
 - [Middleware and boot](#middleware-and-boot)
 - [Async and Falcon](#async-and-falcon)
-- [Plugins](#plugins): ActionView, Phlex, Sprockets, OpenTelemetry
+- [Plugins](#plugins): ActionView, Phlex, Sprockets, OpenTelemetry, Locale
 - [Telemetry](#telemetry)
 - [Listing routes](#listing-routes)
 - [Reloading in development](#reloading-in-development)
@@ -677,6 +677,40 @@ plugin Reprised::Plugins::OpenTelemetry, skip_errors: [MyApp::Maintenance]
 The span gets `http.route` (`/movie/:id`) and the name `GET /movie/:id`, unless `span_name:` (a callable taking the
 route) says otherwise. A 5xx's exception is recorded on the span, which is marked as an error, unless the exception is
 one of `skip_errors` (or a subclass).
+
+### Locale
+
+The request's locale, from where the client says it is, as `I18n.locale` for the request. Needs the i18n gem.
+
+```ruby
+require "reprised/plugins/locale"
+
+plugin Reprised::Plugins::Locale,
+  available: ["en-US", "fr-FR", "fr-CA"],      # default: I18n.available_locales
+  defaults: { "fr" => "fr-FR" },               # a language's locale, for fr and fr-CH
+  from: [:param, :cookie, :accept_language],   # the default
+  param: "locale", cookie: "locale"            # the defaults
+```
+
+- The sources in `from:` are tried in order, and the first to name an available locale decides it. A callable is a
+  source too: it takes the `Rack::Request` and returns a locale, several, or nil
+  (`->(request) { request.cookies["prefs"]&.then { JSON.parse(it)["locale"] } }`).
+- Accept-Language's ranges are tried in order of their q values, so `xx, fr-CA;q=0.9` gives fr-CA. Each header is
+  parsed once per process, and remembered.
+- A candidate matches ignoring case, with `_` for `-`. One that doesn't is shortened a subtag at a time
+  (zh-Hant-TW, then zh-TW without the script, zh-Hant, zh), and its language gets the locale `defaults:` gives it.
+  With no match, it's `default:` (`I18n.default_locale`).
+- `region:` (a callable that takes the request and returns its country) refines Accept-Language: a range that matches
+  only by its language takes that language in the client's region first, so `es-419` from Mexico gives es-MX, and
+  `fr` from Canada fr-CA.
+- It sets `I18n.locale`, which i18n keeps in fiber storage, so it's the request's own under Falcon, and Async tasks the
+  request starts inherit it. The previous locale is put back once the response's body is closed. It's also `locale`
+  and `env["reprised.locale"]`.
+- An HTML response gets `content-language` (unless the app sets one, or `content_language: false`). Where
+  Accept-Language could have decided the locale (no source before it did), the response gets `Vary: Accept-Language`,
+  so a shared cache doesn't give one visitor's language to another (`vary: false` leaves it out).
+- It runs ahead of routing, so error pages have it too, and the query and cookies it reads stay parsed in the env for
+  the app.
 
 ## Telemetry
 
