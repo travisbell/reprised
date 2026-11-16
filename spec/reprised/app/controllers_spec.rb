@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
+require "tmpdir"
+
 RSpec.describe "Controllers" do
   def controller(&) = Class.new(Reprised::Controller, &)
 
@@ -378,6 +381,73 @@ RSpec.describe "Controllers" do
     other_app = Class.new(Reprised::App)
 
     expect { mock_app { mount other_app } }.to raise_error(ArgumentError, /apps can't be mounted/)
-    expect { mock_app { mount Module.new } }.to raise_error(ArgumentError, /isn't a Reprised::Controller/)
+    expect { mock_app { mount String } }.to raise_error(ArgumentError, /isn't a Reprised::Controller/)
+    expect { mock_app { mount "MovieController" } }.to raise_error(ArgumentError, /or a module of them/)
+  end
+
+  it "mounts a controller once" do
+    movies = Class.new(Reprised::Controller) { get("/movie") { "movie" } }
+
+    expect { mock_app { mount movies, movies } }.to raise_error(ArgumentError, /already mounted/)
+  end
+
+  describe "a module" do
+    let(:controllers) do
+      Module.new.tap do |mod|
+        mod.const_set(:ZuluController, Class.new(Reprised::Controller) { get("/:section/:id") { "zulu" } })
+        mod.const_set(:MikeController, Class.new(Reprised::Controller) { get("/debug") { "mike" } })
+        mod.const_set(:AlfaController, Class.new(Reprised::Controller) { get("/movie/:id") { "alfa" } })
+        mod.const_set(:SECTIONS, ["movie", "tv"].freeze)
+        mod.const_set(:Admin, Module.new)
+        mod::Admin.const_set(:UsersController, Class.new(Reprised::Controller) { get("/admin/users/all") { "users" } })
+        mod.const_set(:OtherApp, Class.new(Reprised::App))
+      end
+    end
+
+    it "mounts its controllers in the order of their names, but not its modules' or its apps" do
+      mod = controllers
+      # Module#constants has no particular order: this one's are the reverse of their names'.
+      allow(mod).to receive(:constants).and_return([:ZuluController, :SECTIONS, :OtherApp, :MikeController, :Admin, :AlfaController])
+      app = mock_app { mount mod }
+
+      expect(app.controllers).to eq([mod::AlfaController, mod::MikeController, mod::ZuluController])
+      get "/movie/550"
+      expect(body).to eq("alfa") # AlfaController's route comes before ZuluController's, which also matches.
+      get "/admin/users/all"
+      expect(last_response.status).to eq(404)
+    end
+
+    it "leaves out the controllers named in except, as Symbols, Strings, or classes" do
+      mod = controllers
+      app = mock_app { mount mod, except: [:MikeController, "ZuluController"] }
+      expect(app.controllers).to eq([mod::AlfaController])
+
+      expect(mock_app { mount mod, except: [mod::AlfaController] }.controllers).to eq([mod::MikeController, mod::ZuluController])
+    end
+
+    it "raises for an except name it doesn't have, and for a module with no controllers" do
+      mod = controllers
+
+      expect { mock_app { mount mod, except: [:MikController] } }.to raise_error(ArgumentError, /MikController/)
+      expect { mock_app { mount Module.new } }.to raise_error(ArgumentError, /no controllers to mount/)
+    end
+
+    it "loads controllers that are autoloaded, as Zeitwerk's are" do
+      dir = Dir.mktmpdir
+      File.write(File.join(dir, "reviews_controller.rb"), <<~RUBY)
+        AutoloadedControllers::ReviewsController = Class.new(Reprised::Controller) { get("/reviews") { "reviews" } }
+      RUBY
+      mod = Module.new
+      stub_const("AutoloadedControllers", mod)
+      mod.autoload(:ReviewsController, File.join(dir, "reviews_controller.rb"))
+
+      app = mock_app { mount mod }
+
+      expect(app.controllers).to eq([mod::ReviewsController])
+      get "/reviews"
+      expect(body).to eq("reviews")
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
   end
 end

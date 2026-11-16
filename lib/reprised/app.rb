@@ -57,11 +57,23 @@ module Reprised
 
       # Mounts controllers at this point in the app's definitions: their routes and filters take this place in
       # definition order, as a Sinatra extension's do where it's registered.
-      def mount(*controllers)
+      #
+      # A module mounts every controller defined in it (its own constants, not those of modules inside it), in the
+      # order of their names, apart from those named in +except+ (as Symbols, Strings, or the classes). Constants
+      # Zeitwerk autoloads are loaded as they're found.
+      #
+      #   mount Controllers, except: [:DebugController]
+      def mount(*controllers, except: [])
         ensure_definable!
+        except = Array(except).to_set { it.is_a?(Module) ? it.name.split("::").last : it.to_s }
+        names = Set.new
+        controllers = controllers.flat_map { mountable(it, except, names) }
+        unless (unknown = except - names).empty?
+          raise ArgumentError, "except names no constant of the modules mounted: #{unknown.to_a.join(", ")}"
+        end
+
         controllers.each do |controller|
-          raise ArgumentError, "#{controller.inspect} isn't a Reprised::Controller" unless controller.is_a?(Class) && controller < Controller
-          raise ArgumentError, "#{controller} is an app; apps can't be mounted" if controller <= App
+          raise ArgumentError, "#{controller} is already mounted in #{self}" if self.controllers.include?(controller)
 
           controller.mounted_in(self)
           mount = Mount.new(controller:)
@@ -71,6 +83,28 @@ module Reprised
       end
 
       def controllers = @controllers || []
+
+      # The controllers +controller+ stands for: itself, or a module's (adding the module's constants to +names+).
+      private def mountable(controller, except, names)
+        if controller.is_a?(Class)
+          raise ArgumentError, "#{controller} is an app; apps can't be mounted" if controller <= App
+          raise ArgumentError, "#{controller.inspect} isn't a Reprised::Controller" unless controller < Controller
+
+          return [controller]
+        end
+        raise ArgumentError, "#{controller.inspect} isn't a Reprised::Controller or a module of them" unless controller.is_a?(Module)
+
+        found = controller.constants.sort.filter_map do |name|
+          names << name.to_s
+          next if except.include?(name.to_s)
+
+          value = controller.const_get(name, false)
+          value if value.is_a?(Class) && value < Controller && !(value <= App)
+        end
+        raise ArgumentError, "#{controller} has no controllers to mount" if found.empty?
+
+        found
+      end
 
       # Installs a plugin: a module with `install(app, **options)`, such as Reprised::Plugins::ActionView.
       def plugin(plugin, **options)

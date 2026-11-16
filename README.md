@@ -321,6 +321,11 @@ class App < Reprised::App
 end
 ```
 
+- **Mounting a module:** `mount Controllers` mounts every controller defined in the `Controllers` module, in the order
+  of their names, and `except: [:DebugController]` leaves some out. Zeitwerk's autoloaded controllers load as
+  they're found. Mount order only decides which route answers where two controllers' routes match the same request
+  (`/movie/top-rated` and `/movie/:id`, say). Where that matters, let the broader route `pass` on what isn't its own,
+  so the order doesn't matter, or mount those controllers by name.
 - **Helpers are methods.** A request's scope is an instance of the matched route's controller, so a controller's
   methods (and its `helpers`) are visible to its own routes and templates only, alongside the app's helpers. `private`,
   `super`, and `prepend` work as they normally do, and a controller can override a global helper.
