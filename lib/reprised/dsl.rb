@@ -219,12 +219,37 @@ module Reprised
     # itself, so one that also adds class methods to whatever includes it (ActiveSupport::Concern's ClassMethods, as
     # ActionView's SanitizeHelper has, or `def self.included(base) = base.extend(...)`) gives them to the app. Here they
     # land on the helpers module, which passes them on to the classes, and helpers modules, that include it.
+    #
+    # A Concern that comes in inside another module gets there too, whatever the order modules are included in.
+    # Concern extends only the module it's first included in: ActionView's FormOptionsHelper, a plain module, includes
+    # TextHelper (and so SanitizeHelper), so SanitizeHelper's ClassMethods extend FormOptionsHelper, and a class that
+    # includes FormOptionsHelper before another module that brings SanitizeHelper never gets them (strip_tags then
+    # can't find self.class.full_sanitizer).
     module HelpersModule
       def extend(*modules)
+        modules -= singleton_class.ancestors
+        return self if modules.empty?
+
         super
         class_extensions.concat(modules)
         includers.each { it.extend(*modules) }
         self
+      end
+
+      def include(*modules)
+        super
+        class_methods = modules.flat_map { HelpersModule.concern_class_methods(it) }.uniq
+        extend(*class_methods) unless class_methods.empty?
+        self
+      end
+
+      # The ClassMethods of the ActiveSupport::Concerns among +mod+'s ancestors.
+      def self.concern_class_methods(mod)
+        return [] unless defined?(::ActiveSupport::Concern)
+
+        mod.ancestors.filter_map do |ancestor|
+          ancestor::ClassMethods if ancestor.is_a?(::ActiveSupport::Concern) && ancestor.const_defined?(:ClassMethods, false)
+        end
       end
 
       def included(base)

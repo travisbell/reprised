@@ -812,7 +812,9 @@ Most route code moves over unchanged. What changes:
 - **Settings** are methods on the app (`settings.views`). The public folder is served as in Sinatra. Server, session,
   protection, and logging settings are gone; use Rack middleware in config.ru.
 - **Helpers' class methods:** a helper module that adds class methods to what includes it (`ActiveSupport::Concern`'s
-  `ClassMethods`) gives them to the app and its controllers, so `self.class.full_sanitizer` works in any route.
+  `ClassMethods`) gives them to the app and its controllers, so `self.class.full_sanitizer` works in any route. So does
+  a Concern a plain module brings in (ActionView's FormOptionsHelper brings SanitizeHelper), whatever order the
+  modules are included in.
 - **Specs that stub the app's instances** (`allow_any_instance_of(App)`) need the controller instead: a controller's
   routes run in an instance of the controller.
 - **Protection isn't on by default.** Sinatra adds `Rack::Protection` (frame options, origin checks, JSON CSRF, path

@@ -48,6 +48,29 @@ RSpec.describe Reprised::Plugins::ActionView, type: :app do
     expect(body).to eq(%(<div class="card"><span>&lt;Fight Club&gt;</span> 1.23 Million</div>|<b>|&lt;b&gt;\n))
   end
 
+  # FormOptionsHelper is a plain module that includes TextHelper (and so SanitizeHelper, whose strip_tags reads
+  # self.class.full_sanitizer): ActiveSupport::Concern gives SanitizeHelper's ClassMethods only to FormOptionsHelper.
+  it "gives the app and its controllers the class methods of Concerns inside other helpers, in any order" do
+    helper_lists = [
+      [ActionView::Helpers::FormOptionsHelper],
+      [ActionView::Helpers::FormHelper, ActionView::Helpers::FormOptionsHelper],
+      [ActionView::Helpers::FormOptionsHelper, ActionView::Helpers::FormHelper]
+    ]
+    helper_lists.each do |list|
+      tags = Class.new(Reprised::Controller) { get("/controller") { strip_tags("<b>controller</b>") } }
+      app = Class.new(Reprised::App) do
+        plugin Reprised::Plugins::ActionView, helpers: list
+        get("/app") { strip_tags("<b>app</b>") }
+        mount tags
+      end
+      # A request of its own for each app: Rack::Test keeps the app its session started with.
+      request = Rack::MockRequest.new(app)
+
+      expect(request.get("/app").body).to eq("app"), list.inspect
+      expect(request.get("/controller").body).to eq("controller"), list.inspect
+    end
+  end
+
   it "gives controllers the helpers too" do
     views_dir = views
     search = Class.new(Reprised::Controller) { get("/search") { erb :"action_view/form", locals: { query: "x" } } }
