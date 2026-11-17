@@ -46,6 +46,8 @@ module Reprised
       @matcher = matcher
       @pattern_options = pattern_options.freeze
       @lanes = {}
+      # What was added to each lane, in order, until finalize! compares them.
+      @additions = {}
       @size = 0
     end
 
@@ -64,12 +66,22 @@ module Reprised
       entry = Entry.new(index: @size, value:, composite: patterns.size > 1)
       target = (@lanes[lane] ||= new_lane)
       patterns.each { target.add(it, entry) }
+      (@additions[lane] ||= []) << [pattern, value]
       @size += 1
       entry
     end
 
+    # A lane with the same patterns and values as another, added in the same order, shares that lane rather than keep
+    # a copy: an app's HEAD lane, when its get routes answer HEAD and it has no head routes of its own.
     def finalize!
-      @lanes.each_value(&:finalize!)
+      additions = @additions
+      @additions = nil
+      kept = []
+      @lanes.keys.each do |lane|
+        twin = kept.find { same_additions?(additions[it], additions[lane]) }
+        twin ? @lanes[lane] = @lanes[twin] : kept << lane
+      end
+      kept.each { @lanes[it].finalize! }
       @lanes.freeze
       freeze
     end
@@ -112,6 +124,12 @@ module Reprised
     private
 
     def new_lane = @matcher == :trie ? TrieLane.new : IndexLane.new(simple: @pattern_options.empty?)
+
+    def same_additions?(these, those)
+      these.size == those.size && these.each_with_index.all? do |(pattern, value), i|
+        pattern.equal?(those[i][0]) && value.equal?(those[i][1])
+      end
+    end
 
     def compile(pattern)
       pattern.is_a?(Mustermann::Pattern) ? pattern : Mustermann.new(pattern, **@pattern_options)

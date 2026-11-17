@@ -8,6 +8,8 @@ module Reprised
   # conditions, in the app's context, and they compile into routers.
   module DSL
     VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "LINK", "UNLINK"].freeze
+    # A route's or filter's options when it has none, shared rather than an empty Hash each.
+    NO_OPTIONS = {}.freeze
 
     # Sinatra settings Reprised doesn't act on: each belongs in config.ru middleware or is gone. Setting one warns.
     IGNORED_SETTINGS = [
@@ -333,7 +335,7 @@ module Reprised
       options = options.dup
       timeout = options.delete(:timeout)
       route = Route.new(
-        verb:, path:, options: options.freeze, conditions: take_pending_conditions,
+        verb:, path:, options: options.empty? ? NO_OPTIONS : options.freeze, conditions: take_pending_conditions,
         action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location:, head:
       )
       definitions(:routes) << route
@@ -349,7 +351,7 @@ module Reprised
       raise ArgumentError, "overlap: takes :ok, not #{overlap.inspect}" unless overlap.nil? || overlap == :ok
 
       @definitions[type] << Filter.new(
-        type:, path:, options: options.freeze, conditions: take_pending_conditions,
+        type:, path:, options: options.empty? ? NO_OPTIONS : options.freeze, conditions: take_pending_conditions,
         action: compile_method("#{type.upcase} #{path || "*"}", block), owner: self, source_location: block.source_location,
         overlap: !overlap.nil?
       )

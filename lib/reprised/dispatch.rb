@@ -42,8 +42,9 @@ module Reprised
       @route = nil
       @filtered = false
       @static = false
-      # The controllers whose filters run for this request: each one a matched route belonged to.
-      @filter_owners = []
+      # The controllers whose filters run for this request: each one a matched route belonged to. A shared empty Array
+      # until there's one (filter_owner!), so a request for the app's own routes doesn't allocate it.
+      @filter_owners = NO_VALUES
       @pinned_content_type = false
       # Until user code (a condition, filter, or route) has run, the scope holds only what Controller#initialize set,
       # so moving it to another controller needn't look for instance variables to carry over.
@@ -245,7 +246,7 @@ module Reprised
     # route must agree with it rather than replace it (as in Sinatra).
     def before_filters!
       @filtered = true
-      @filter_owners << @route.owner if @route && !(@route.owner <= App)
+      filter_owner!(@route.owner) if @route && !(@route.owner <= App)
       filters = @runtime.before
       return if filters&.empty?
 
@@ -265,10 +266,15 @@ module Reprised
       response["content-type"] ||= chosen
     end
 
+    def filter_owner!(owner)
+      @filter_owners = [] if @filter_owners.frozen?
+      @filter_owners << owner
+    end
+
     # Runs +owner+'s before filters, for a route of another controller than the one whose filters have run (as after
     # `pass`): they'd have run had its route matched first. The app's have run already, and don't run again.
     def controller_filters!(owner)
-      @filter_owners << owner
+      filter_owner!(owner)
       return if @runtime.before # Every before filter is the app's.
 
       content_type_before = response["content-type"]

@@ -217,6 +217,33 @@ RSpec.describe Reprised::Router do
     expect { routes.add("GET", "/x", :x) }.to raise_error(FrozenError)
   end
 
+  it "shares a lane that has the same patterns and values as another, in the same order" do
+    movie = "/movie/:id"
+    routes = router do
+      add("GET", movie, :show)
+      add("HEAD", movie, :show)
+      add("GET", "/movie", :index)
+      add("HEAD", "/movie", :index)
+    end
+    lanes = routes.instance_variable_get(:@lanes)
+
+    expect(lanes["HEAD"]).to be(lanes["GET"])
+    expect(values(routes, "/movie/550", lane: "HEAD")).to eq([:show])
+  end
+
+  it "keeps a lane of its own when it differs from the others" do
+    routes = router do
+      add("GET", "/movie/:id", :show)
+      add("HEAD", "/movie/:id", :show)
+      add("HEAD", "/movie/:id", :head_only)
+    end
+    lanes = routes.instance_variable_get(:@lanes)
+
+    expect(lanes["HEAD"]).not_to be(lanes["GET"])
+    expect(values(routes, "/movie/550", lane: "HEAD")).to eq([:show, :head_only])
+    expect(values(routes, "/movie/550", lane: "GET")).to eq([:show])
+  end
+
   it "rejects unknown matchers" do
     expect { described_class.new(matcher: :linear) }.to raise_error(ArgumentError, /unknown matcher/)
   end
