@@ -7,11 +7,14 @@
 #   bundle exec ruby --yjit bench.rb               # every workload
 #   bundle exec ruby --yjit bench.rb params erb    # some
 #
-# Each framework and workload runs in a process of its own: time is the median of ten rounds, after a warm-up, and
-# allocations are per request.
+# Each framework and workload runs in a process of its own, which builds its app: time is the median of ten rounds,
+# after a warm-up, and allocations are per request. Memory is the Ruby heap (ObjectSpace.memsize_of_all, after a full GC):
+# what the app holds once it's ready to serve, and what the heap keeps after the timed run. Each library's cost, heap
+# and resident, is measured in a fresh process that requires only it.
 
 require "bundler/setup"
 require "json"
+require "objspace"
 require "rack/mock"
 require "reprised"
 require "sinatra/base"
@@ -23,28 +26,42 @@ VIEWS = File.expand_path("../../spec/fixtures/views", __dir__)
 RESOURCES = 500
 CAST = Array.new(20) { "Actor #{it}" }.freeze
 
+# The ERB apps' helper, which the fixture templates call.
+module MovieHelpers
+  def movie_title = "Fight Club"
+end
+
 # -- Reprised ------------------------------------------------------------------------------------------------------------
 
 module ReprisedApps
   def self.app(&) = Class.new(Reprised::App) { set :environment, :production }.tap { it.class_eval(&) }.tap(&:finalize!)
 
-  HELLO = app { get("/") { "Hello World" } }
-  PARAMS = app { get("/users/:id") { |id| json(id:, fields: params[:fields]) } }
-  FILTERS = app do
-    before { @user = "ana" }
-    after { response["x-served-by"] = "bench" }
-    get("/users/:id") { "#{@user} #{params[:id]}" }
-  end
-  LARGE = app do
-    RESOURCES.times do |n|
-      get("/r#{n}") { "index" }
-      get("/r#{n}/:id") { |id| "show #{id}" }
+  def self.hello = app { get("/") { "Hello World" } }
+  def self.params = app { get("/users/:id") { |id| json(id:, fields: params[:fields]) } }
+
+  def self.filters
+    app do
+      before { @user = "ana" }
+      after { response["x-served-by"] = "bench" }
+      get("/users/:id") { "#{@user} #{params[:id]}" }
     end
   end
-  ERB = app do
-    set(:views, VIEWS)
-    helpers { def movie_title = "Fight Club" }
-    get("/") { erb(:"movie/show", layout: :"layouts/main", locals: { title: "Movie", cast: CAST }) }
+
+  def self.large
+    app do
+      RESOURCES.times do |n|
+        get("/r#{n}") { "index" }
+        get("/r#{n}/:id") { |id| "show #{id}" }
+      end
+    end
+  end
+
+  def self.erb
+    app do
+      set(:views, VIEWS)
+      helpers(MovieHelpers)
+      get("/") { erb(:"movie/show", layout: :"layouts/main", locals: { title: "Movie", cast: CAST }) }
+    end
   end
 end
 
@@ -59,28 +76,40 @@ module SinatraApps
     end.tap { it.class_eval(&) }
   end
 
-  HELLO = app { get("/") { "Hello World" } }
-  PARAMS = app do
-    get("/users/:id") do |id|
-      content_type(:json)
-      JSON.generate(id:, fields: params[:fields])
+  def self.hello = app { get("/") { "Hello World" } }
+
+  def self.params
+    app do
+      get("/users/:id") do |id|
+        content_type(:json)
+        JSON.generate(id:, fields: params[:fields])
+      end
     end
   end
-  FILTERS = app do
-    before { @user = "ana" }
-    after { response["x-served-by"] = "bench" }
-    get("/users/:id") { "#{@user} #{params[:id]}" }
-  end
-  LARGE = app do
-    RESOURCES.times do |n|
-      get("/r#{n}") { "index" }
-      get("/r#{n}/:id") { |id| "show #{id}" }
+
+  def self.filters
+    app do
+      before { @user = "ana" }
+      after { response["x-served-by"] = "bench" }
+      get("/users/:id") { "#{@user} #{params[:id]}" }
     end
   end
-  ERB = app do
-    set(:views, VIEWS)
-    helpers { def movie_title = "Fight Club" }
-    get("/") { erb(:"movie/show", layout: :"layouts/main", locals: { title: "Movie", cast: CAST }) }
+
+  def self.large
+    app do
+      RESOURCES.times do |n|
+        get("/r#{n}") { "index" }
+        get("/r#{n}/:id") { |id| "show #{id}" }
+      end
+    end
+  end
+
+  def self.erb
+    app do
+      set(:views, VIEWS)
+      helpers(MovieHelpers)
+      get("/") { erb(:"movie/show", layout: :"layouts/main", locals: { title: "Movie", cast: CAST }) }
+    end
   end
 end
 
@@ -89,37 +118,49 @@ end
 module RodaApps
   def self.app(&) = Class.new(Roda, &).tap { it.freeze }.app
 
-  HELLO = app { route { |r| r.root { "Hello World" } } }
-  PARAMS = app do
-    route do |r|
-      r.get("users", String) do |id|
-        response["content-type"] = "application/json"
-        JSON.generate(id:, fields: r.params["fields"])
+  def self.hello = app { route { |r| r.root { "Hello World" } } }
+
+  def self.params
+    app do
+      route do |r|
+        r.get("users", String) do |id|
+          response["content-type"] = "application/json"
+          JSON.generate(id:, fields: r.params["fields"])
+        end
       end
     end
   end
-  FILTERS = app do
-    plugin(:hooks)
-    before { @user = "ana" }
-    after { |result| result[1]["x-served-by"] = "bench" if result }
-    route { |r| r.get("users", String) { |id| "#{@user} #{id}" } }
-  end
-  LARGE = app do
-    plugin(:hash_branches)
-    RESOURCES.times do |n|
-      hash_branch("r#{n}") do |r|
-        r.get(true) { "index" }
-        r.get(String) { |id| "show #{id}" }
-      end
+
+  def self.filters
+    app do
+      plugin(:hooks)
+      before { @user = "ana" }
+      after { |result| result[1]["x-served-by"] = "bench" if result }
+      route { |r| r.get("users", String) { |id| "#{@user} #{id}" } }
     end
-    route(&:hash_branches)
   end
-  ERB = app do
-    plugin(:render, views: VIEWS, engine: "erb", layout: "layouts/main")
-    # The fixture templates call Sinatra's erb for their partial.
-    define_method(:erb) { |name, locals: {}| render(name.to_s, locals:) }
-    define_method(:movie_title) { "Fight Club" }
-    route { |r| r.root { view("movie/show", locals: { cast: CAST }, layout_opts: { locals: { title: "Movie" } }) } }
+
+  def self.large
+    app do
+      plugin(:hash_branches)
+      RESOURCES.times do |n|
+        hash_branch("r#{n}") do |r|
+          r.get(true) { "index" }
+          r.get(String) { |id| "show #{id}" }
+        end
+      end
+      route(&:hash_branches)
+    end
+  end
+
+  def self.erb
+    app do
+      plugin(:render, views: VIEWS, engine: "erb", layout: "layouts/main")
+      # The fixture templates call Sinatra's erb for their partial.
+      define_method(:erb) { |name, locals: {}| render(name.to_s, locals:) }
+      define_method(:movie_title) { "Fight Club" }
+      route { |r| r.root { view("movie/show", locals: { cast: CAST }, layout_opts: { locals: { title: "Movie" } }) } }
+    end
   end
 end
 
@@ -166,15 +207,18 @@ module HanamiApps
     def handle(request, response) = response.body = "show #{request.params[:id]}"
   end
 
-  HELLO = Hanami::Router.new { root(to: Hello.new) }
-  PARAMS = Hanami::Router.new { get("/users/:id", to: Params.new) }
-  FILTERS = Hanami::Router.new { get("/users/:id", to: Filters.new) }
-  LARGE = Hanami::Router.new do
-    index = Index.new
-    show = Show.new
-    RESOURCES.times do |n|
-      get("/r#{n}", to: index)
-      get("/r#{n}/:id", to: show)
+  def self.hello = Hanami::Router.new { root(to: Hello.new) }
+  def self.params = Hanami::Router.new { get("/users/:id", to: Params.new) }
+  def self.filters = Hanami::Router.new { get("/users/:id", to: Filters.new) }
+
+  def self.large
+    Hanami::Router.new do
+      index = Index.new
+      show = Show.new
+      RESOURCES.times do |n|
+        get("/r#{n}", to: index)
+        get("/r#{n}/:id", to: show)
+      end
     end
   end
 end
@@ -192,17 +236,22 @@ end
 # Requests across the whole table, so a framework that tries routes in order is measured fairly.
 LARGE_REQUESTS = (0...RESOURCES).step(25).flat_map { [env("/r#{it}"), env("/r#{it}/#{it * 7}")] }.freeze
 
-# name => [requests, expected [status, body] for each, apps]
+# name => [requests, expected [status, body] for each, the app's builder method]
 WORKLOADS = {
-  "hello" => [[env("/")], ->(_) { [200, "Hello World"] }, :HELLO],
-  "params" => [[env("/users/42", query: "fields=name,email", accept: "application/json")], ->(_) { [200, '{"id":"42","fields":"name,email"}'] }, :PARAMS],
-  "filters" => [[env("/users/42")], ->(_) { [200, "ana 42"] }, :FILTERS],
-  "large table" => [LARGE_REQUESTS, ->(e) { [200, e["PATH_INFO"].count("/") == 1 ? "index" : "show #{e["PATH_INFO"].split("/").last}"] }, :LARGE],
-  "404" => [[env("/nope"), env("/r10/1/2"), env("/r9999")], ->(_) { [404, nil] }, :LARGE],
-  "erb" => [[env("/")], ->(_) { [200, nil] }, :ERB]
+  "hello" => [[env("/")], ->(_) { [200, "Hello World"] }, :hello],
+  "params" => [[env("/users/42", query: "fields=name,email", accept: "application/json")], ->(_) { [200, '{"id":"42","fields":"name,email"}'] }, :params],
+  "filters" => [[env("/users/42")], ->(_) { [200, "ana 42"] }, :filters],
+  "large table" => [LARGE_REQUESTS, ->(e) { [200, e["PATH_INFO"].count("/") == 1 ? "index" : "show #{e["PATH_INFO"].split("/").last}"] }, :large],
+  "404" => [[env("/nope"), env("/r10/1/2"), env("/r9999")], ->(_) { [404, nil] }, :large],
+  "erb" => [[env("/")], ->(_) { [200, nil] }, :erb]
 }.freeze
 
 FRAMEWORKS = { "reprised" => ReprisedApps, "sinatra" => SinatraApps, "roda" => RodaApps, "hanami" => HanamiApps }.freeze
+
+# What each framework requires, for its library's memory.
+LIBRARIES = {
+  "reprised" => ["reprised"], "sinatra" => ["sinatra/base"], "roda" => ["roda"], "hanami" => ["hanami/router", "hanami/action"]
+}.freeze
 
 def body_of(response)
   body = +""
@@ -221,6 +270,14 @@ def check(app, requests, expected)
   end
   nil
 end
+
+# The Ruby heap's live objects and their bytes (ObjectSpace.memsize_of_all), after a full GC.
+def heap
+  GC.start(full_mark: true, immediate_sweep: true)
+  [GC.stat(:heap_live_slots), ObjectSpace.memsize_of_all]
+end
+
+def rss_kb = Integer(`ps -o rss= -p #{Process.pid}`)
 
 def measure(app, requests, seconds: 3.0)
   run = -> { requests.each { |request| app.call(request.dup)[2].then { it.close if it.respond_to?(:close) } } }
@@ -243,13 +300,28 @@ def measure(app, requests, seconds: 3.0)
   [rounds[5], (GC.stat(:total_allocated_objects) - before).fdiv(requests.size)]
 end
 
-def isolated
+# Builds the app in a process of its own, with a compacted heap, and checks and measures it there:
+# - app: what the heap holds for the app once it's built and has answered each request once (ready to serve)
+# - growth: what the heap holds on to after the timed run (the requests' caches, or a leak)
+def isolated(apps, builder, requests, expected)
   reader, writer = IO.pipe
   pid = fork do
     reader.close
     GC.start
     GC.compact
-    writer.write(JSON.generate(yield))
+    base_slots, base_bytes = heap
+    app = apps.public_send(builder)
+    problem = check(app, requests, expected)
+    result = if problem
+      { "problem" => problem }
+    else
+      app_slots, app_bytes = heap
+      us, allocations = measure(app, requests)
+      after_slots, after_bytes = heap
+      { "us" => us, "allocations" => allocations, "app_objects" => app_slots - base_slots, "app_kb" => (app_bytes - base_bytes) / 1024.0,
+        "growth_objects" => after_slots - app_slots, "growth_kb" => (after_bytes - app_bytes) / 1024.0 }
+    end
+    writer.write(JSON.generate(result))
     writer.close
     exit!(0)
   end
@@ -259,31 +331,58 @@ def isolated
   result
 end
 
+# A fresh Ruby, with Bundler and Rack loaded, that then requires the framework: what the framework itself costs, in
+# resident memory and in the Ruby heap.
+LIBRARY_PROBE = <<~RUBY
+  require "bundler/setup"
+  require "json"
+  require "objspace"
+  require "rack"
+  heap = -> { GC.start(full_mark: true, immediate_sweep: true); [ObjectSpace.memsize_of_all, Integer(`ps -o rss= -p \#{Process.pid}`)] }
+  bytes, rss = heap.()
+  ARGV.each { require it }
+  after_bytes, after_rss = heap.()
+  print JSON.generate("heap_kb" => (after_bytes - bytes) / 1024.0, "rss_kb" => after_rss - rss)
+RUBY
+
+def library(requires)
+  results = Array.new(3) { JSON.parse(IO.popen([RbConfig.ruby, "-e", LIBRARY_PROBE, *requires], &:read)) }
+  %w[heap_kb rss_kb].to_h { |key| [key, results.map { it[key] }.sort[1]] } # the median of three
+end
+
+def mb(kb) = kb >= 1024 ? format("%.1f MB", kb / 1024.0) : format("%.0f KB", kb)
+
 names = ARGV.empty? ? WORKLOADS.keys : WORKLOADS.keys.select { |name| ARGV.any? { name.start_with?(it) } }
 jit = defined?(RubyVM::YJIT) && RubyVM::YJIT.enabled? ? "YJIT" : "interpreter"
 versions = { "reprised" => Reprised::VERSION, "sinatra" => Sinatra::VERSION, "roda" => Roda::RodaVersion,
              "hanami" => "router #{Gem.loaded_specs["hanami-router"].version}, controller #{Gem.loaded_specs["hanami-controller"].version}" }
-puts "Ruby #{RUBY_VERSION}, #{jit}. #{versions.map { "#{_1} #{_2}" }.join("; ")}"
+puts "Ruby #{RUBY_VERSION}, #{jit}. #{versions.map { "#{_1} #{_2}" }.join("; ")}. Mustermann #{Gem.loaded_specs["mustermann"].version}"
+puts
+
+puts format("%-12s %12s %12s", "library", "heap", "RSS")
+LIBRARIES.each do |framework, requires|
+  result = library(requires)
+  puts format("  %-10s %12s %12s", framework, mb(result["heap_kb"]), mb(result["rss_kb"]))
+end
 puts
 
 names.each do |name|
-  requests, expected, constant = WORKLOADS.fetch(name)
-  results = FRAMEWORKS.filter_map do |framework, apps|
-    next [framework, nil, "n/a"] unless apps.const_defined?(constant, false)
+  requests, expected, builder = WORKLOADS.fetch(name)
+  results = FRAMEWORKS.map do |framework, apps|
+    next [framework, nil, "n/a"] unless apps.respond_to?(builder)
 
-    app = apps.const_get(constant, false)
-    problem = check(app, requests, expected)
-    next [framework, nil, "wrong response: #{problem}"] if problem
+    result = isolated(apps, builder, requests, expected)
+    next [framework, nil, "wrong response: #{result["problem"]}"] if result["problem"]
 
-    us, allocations = isolated { measure(app, requests) }
-    [framework, [us, allocations], nil]
+    [framework, result, nil]
   end
 
-  fastest = results.filter_map { it[1]&.first }.min
-  puts format("%-12s %10s %10s %12s", name, "µs/req", "vs fastest", "allocs/req")
-  results.each do |framework, numbers, note|
-    if numbers
-      puts format("  %-10s %10.2f %9.1f× %12.1f", framework, numbers[0], numbers[0] / fastest, numbers[1])
+  fastest = results.filter_map { it[1]&.fetch("us") }.min
+  puts format("%-12s %10s %10s %12s %10s %12s %10s", name, "µs/req", "vs fastest", "allocs/req", "app", "app objects", "growth")
+  results.each do |framework, r, note|
+    if r
+      puts format("  %-10s %10.2f %9.1f× %12.1f %10s %12d %10s", framework, r["us"], r["us"] / fastest, r["allocations"],
+        mb(r["app_kb"]), r["app_objects"], mb(r["growth_kb"]))
     else
       puts format("  %-10s %s", framework, note)
     end

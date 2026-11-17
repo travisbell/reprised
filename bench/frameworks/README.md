@@ -9,9 +9,17 @@ bundle install
 bundle exec ruby --yjit bench.rb
 ```
 
-Each framework and workload runs in a process of its own, with a compacted heap. Time is the median of ten rounds after
-a warm-up, through a full Rack call (the harness copies each request's env, as a server builds one). Allocations are per
-request.
+Each framework and workload runs in a process of its own, with a compacted heap, which builds its app. Time is the
+median of ten rounds after a warm-up, through a full Rack call (the harness copies each request's env, as a server
+builds one). Allocations are per request.
+
+Memory is the Ruby heap, as `ObjectSpace.memsize_of_all` counts it after a full GC:
+
+- **app:** what the heap holds for the app once it's built and has answered each of the workload's requests once,
+  ready to serve. It's the app's routes, patterns, compiled blocks, and indexes, not the framework's code.
+- **growth:** what the heap holds on to after the timed run, which a cache or a leak would show. Within ±10 KB is noise.
+- **library:** what requiring the framework adds to a fresh Ruby that has loaded Bundler and Rack, in the heap and in
+  resident memory (RSS). The median of three processes.
 
 | workload | what it does |
 |---|---|
@@ -32,33 +40,29 @@ How each framework is set up:
   the user on as an exposure, since actions are frozen and shared. There's no Hanami ERB result, because hanami-view
   isn't part of this bundle.
 
-## Results (2026-11-14)
+## Results (2026-11-17)
 
 Ruby 4.0.9 with YJIT, Apple Silicon. Reprised 0.1.0, Sinatra 4.2.1, Roda 3.110.0, hanami-router 3.0.0 with
 hanami-controller 2.3.2, all on Mustermann 3.1.1. Times under 3 µs vary by about ±10% between runs.
 
 | workload | Reprised | Sinatra | Roda | Hanami |
 |---|---|---|---|---|
-| hello | 1.63 µs (13) | 4.94 (56) | **0.72** (11) | 14.65 (227) |
-| params | 3.54 (24) | 7.60 (84) | **2.73** (36) | 13.18 (174) |
-| filters | 3.38 (23) | 8.75 (101) | **1.29** (18) | 16.70 (247) |
-| large table | 2.51 (15.5) | 162.29 (1,964) | **1.15** (15.5) | 15.48 (231) |
-| 404 | 2.31 (13.3) | 350.71 (4,080) | 0.93 (12) | **0.96** (7.3) |
-| erb | **6.04** (39) | 13.80 (122) | 8.00 (48) | n/a |
+| hello | 1.81 µs (13) | 5.02 (56) | **0.76** (11) | 14.89 (227) |
+| params | 3.68 (24) | 7.72 (84) | **2.76** (36) | 13.30 (174) |
+| filters | 3.43 (23) | 8.79 (101) | **1.32** (18) | 17.17 (247) |
+| large table | 2.40 (15.5) | 167.08 (1,964) | **1.16** (15.5) | 17.41 (231) |
+| 404 | 2.19 (13.3) | 357.24 (4,081) | 0.89 (12) | **0.87** (7.3) |
+| erb | **6.24** (39) | 13.59 (122) | 8.06 (48) | n/a |
 
 µs per request (allocations per request). Fastest in bold.
 
-Reading it:
+| memory | Reprised | Sinatra | Roda | Hanami |
+|---|---|---|---|---|
+| library: heap / RSS | 855 KB / 4.9 MB | 1.2 MB / 12.8 MB | **549 KB / 3.0 MB** | 923 KB / 5.4 MB |
+| hello app | 13 KB | 28 KB | **8 KB** | 65 KB |
+| erb app | **27 KB** | 40 KB | 51 KB | n/a |
+| large table app (1,000 routes) | 4.0 MB | 3.5 MB | **157 KB** | 1.8 MB |
+| growth after the timed run | none | none | none | none |
 
-- **Reprised vs Sinatra:** 2–3× faster on small apps, and 65× (large table) and 150× (404s) on many routes. Sinatra
-  tries routes one by one, and a 404 tries them all.
-- **Reprised vs Roda:** Roda is 1.3–2.6× faster outside templates, and Reprised renders ERB about 25% faster. Roda's
-  routing tree runs as part of the route block, with one object per request, plain-Hash headers, and nothing to skip.
-  Reprised keeps Sinatra's model (filters, conditions, error handlers, `pass`, controller scopes, Rack::Headers'
-  case-insensitive headers, and `Reprised.current`), and its remaining cost is spread across those. Closing it further
-  would mean dropping one of them.
-- **Hanami:** `Hanami::Action` dominates its cost (configuration read through `method_missing`, `Accept`
-  negotiation). Its router alone is fast, as the 404s show.
-
-Earlier on 2026-11-14, before the gap-closing pass, Reprised measured hello 2.26, params 4.11, filters 4.14, large table
-2.82, 404 2.68, and erb 6.85.
+A large app's heap in Reprised is mostly its Mustermann patterns (about 2.3 KB a route, which Sinatra holds too), then
+its route index (about 1 KB a route) and each route's compiled block. Roda's `hash_branches` keeps no patterns at all.
