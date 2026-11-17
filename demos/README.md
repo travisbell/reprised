@@ -29,8 +29,11 @@ And throughout:
   Sprockets plugin, and gets its logo's URL from `asset_path`.
 - **A plugin of the app's own:** [server_timing.rb](server_timing.rb) adds a `Server-Timing` header to every response,
   which your browser's network panel shows.
-- **Telemetry:** [config.ru](config.ru) logs a line per request, labelled with its route's pattern, and the stall
-  detector logs a request that blocks the event loop (try the streaming demo's last button).
+- **Configuration:** [config/application.rb](config/application.rb) is the demos' `Reprised::Application`: the
+  middleware, and per environment ([config/environments/](config/environments/)) the reloading and the editor links.
+  [config.ru](config.ru) is one line.
+- **Telemetry:** [config/application.rb](config/application.rb) logs a line per request, labelled with its route's
+  pattern, and the stall detector logs a request that blocks the event loop (try the streaming demo's last button).
 - **Reloading:** in development, `Reprised::Reloader` reloads the app when a file here changes. Edit one and refresh.
 - **Listing routes:** `bundle exec reprised routes -r ./demos/app.rb Demos`.
 

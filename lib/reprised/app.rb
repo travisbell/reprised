@@ -53,6 +53,13 @@ module Reprised
       def settings = self
       def app = self
 
+      # An app being defined gets its settings from the Reprised::Application whose config.app it is, before its class
+      # body runs (so `set` there wins).
+      def inherited(subclass)
+        super
+        Reprised.application&.configure_app(subclass)
+      end
+
       # Rack entry point.
       def call(env) = (@stack || finalize!.stack).call(env)
 

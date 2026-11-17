@@ -48,6 +48,7 @@ WebSockets, ActionView forms, and Phlex components. `bundle exec rake demos` run
 - [Settings](#settings)
 - [Templates](#templates)
 - [Middleware and boot](#middleware-and-boot)
+- [Application: configuration and boot](#application-configuration-and-boot)
 - [Async and Falcon](#async-and-falcon)
 - [Plugins](#plugins): ActionView, Phlex, Sprockets, OpenTelemetry, Locale
 - [Telemetry](#telemetry)
@@ -518,6 +519,85 @@ defined. Call `App.finalize!` at boot (before forking workers, or in Falcon's `w
 `App.routes` and `App.filters` are the finalized tables, mounted controllers included. `env["reprised.route"]` is the
 matched route, and `env["reprised.error"]` the exception handled, for middleware to read.
 
+## Application: configuration and boot
+
+For an app with more to configure than a few settings, `Reprised::Application` gathers its configuration in `config/`,
+defined per environment, as a Rails application's is: the app's settings, the Rack middleware around it, its code
+loader, and what runs before the server forks its workers, in each worker, and at exit. config.ru and the server's
+preload become a line each. It's optional: an app run from config.ru with `use` and `run` works as it always has.
+
+```ruby
+# config/application.rb
+require "reprised/application"
+
+class Application < Reprised::Application
+  config.app = "App"                       # the Reprised::App to serve, by name, so the reloader can swap it
+  config.loader = LOADER                   # a Zeitwerk loader, for eager loading and reloading
+  config.eager_load = true
+
+  config.static_cache_control = [:public, { max_age: 3600 }] # the app's settings, by name
+  config.x.page_max_age = 86_400           # configuration of your own: Application.config.x.page_max_age
+
+  config.middleware.use Rack::Session::Cookie, secret: ENV.fetch("SESSION_SECRET")
+  config.middleware.use Rack::ETag
+  config.mount "/status", StatusApp        # Rack::Builder's map, inside the middleware
+
+  config.before_fork { I18n.backend.eager_load! } # in the parent, so the workers share it
+  config.on_worker_start { Metrics.start }        # in each worker: what starts threads
+  config.on_shutdown { Metrics.stop }             # at exit, in each worker, in order
+end
+```
+
+```ruby
+# config/environments/development.rb
+Application.configure do
+  config.eager_load = false
+  config.reload = true                     # Reprised::Reloader around the app
+  config.editor = :vscode                  # the exception page's links
+  config.middleware.delete Rack::ETag
+end
+
+# config/environments/production.rb (staging.rb can `require_relative "production"`, then change what differs)
+Application.configure do
+  config.warmup { |app| Cache.warm(app) }  # with the built Rack app (Rack::Builder's warmup)
+end
+```
+
+```ruby
+# config/environment.rb: what everything that loads the app requires
+require_relative "application"
+Application.boot!
+require_relative "../app"
+
+# config.ru
+require_relative "config/environment"
+Application.rackup(self)
+
+# Falcon's preload file (preload "preload.rb" in falcon.rb)
+require_relative "config/environment"
+Application.preload!
+```
+
+- **`boot!`** loads `config/environments/<environment>.rb` (after config/application.rb, so it can change what that set
+  up), then has the loader eager load if `eager_load` is set. The environment is `APP_ENV` or `RACK_ENV`, any name:
+  `staging` gets `staging.rb`.
+- **The app's settings** are set by name: `config.method_override = true` is the app's `set :method_override, true`.
+  A name that isn't a Reprised setting raises, to catch typos; `config.set(:name, value)` sets one the app defines
+  itself, and `config.x` holds configuration of your own (reading one that isn't set raises). The app is given them
+  as its class is defined, before its body runs, so `set` in the class still wins, and a reloaded app gets them again.
+  An app defined before `boot!` raises, since it would miss its environment's settings.
+- **`config.middleware`** is the stack around the app, outermost first: `use`, `unshift`, `insert_before`,
+  `insert_after`, `swap`, and `delete`, by class or by its name as a String (resolved when the stack is built). It's
+  outside the app, so the reloader doesn't rebuild it; `use` in the app's class still adds middleware inside it.
+- **`rackup(self)`** in config.ru runs the `on_worker_start` hooks (once a process), has the `on_shutdown` hooks run
+  at exit, registers the `warmup` hooks, and adds the middleware, the mounted apps, and the app: the app class, or a
+  `Reprised::Reloader` for it with `reload` set (`reload_files` names files that define an app the loader doesn't
+  load, from the project's root).
+- **`preload!`** boots, runs the `before_fork` hooks, finalizes the app (unless it's reloaded), and compacts the
+  heap with `Process.warmup`, so the workers share as much memory as they can.
+
+The project's root (`config.root`, also the app's `root` setting) is config/application.rb's parent directory.
+
 ## Async and Falcon
 
 **`Reprised.current`** is the request scope handling the current request, from anywhere in it: a service object, a Phlex
@@ -829,9 +909,9 @@ else
 end
 ```
 
-The loader needs `enable_reloading` before its `setup`. A reload that raises (a syntax error, say) answers with the
-error, and is tried again with the next request. config.ru and its middleware aren't reloaded. The stall detector
-doesn't report the time spent loading code.
+With a `Reprised::Application`, `config.reload = true` does this. The loader needs `enable_reloading` before its
+`setup`. A reload that raises (a syntax error, say) answers with the error, and is tried again with the next request.
+config.ru and its middleware aren't reloaded. The stall detector doesn't report the time spent loading code.
 
 ## Ractors
 

@@ -21,4 +21,8 @@ require_relative "reprised/extension"
 
 # A Sinatra-compatible Rack router for Ruby 4, built on Mustermann 4 and designed for Falcon and Async.
 module Reprised
+  class << self
+    # The Reprised::Application being run, once one is defined (require "reprised/application").
+    attr_accessor :application
+  end
 end
