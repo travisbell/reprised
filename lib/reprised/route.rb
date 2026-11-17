@@ -23,8 +23,9 @@ module Reprised
     def inspect = "#<Reprised::Route #{self} #{source_location&.join(":")}>"
   end
 
-  # A before or after filter. +path+ is nil for one that applies to every request.
-  Filter = Data.define(:type, :path, :options, :conditions, :action, :owner, :source_location) do
+  # A before or after filter. +path+ is nil for one that applies to every request. +overlap+ is true for a controller's
+  # filter that means to match other controllers' routes too (`overlap: :ok`), so the overlap check leaves it out.
+  Filter = Data.define(:type, :path, :options, :conditions, :action, :owner, :source_location, :overlap) do
     def to_s = "#{type} #{path ? Route.pattern_for(path) : "*"}"
   end
 

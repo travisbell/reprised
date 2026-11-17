@@ -263,6 +263,48 @@ RSpec.describe "Controllers" do
     expect { app.finalize! }.to raise_error(ArgumentError, /filters overlap/)
   end
 
+  it "leaves out a filter marked overlap: :ok, which means to match other controllers' routes too" do
+    movies = controller do
+      before("/movie/:id*", overlap: :ok) { @loaded = true }
+      before("/movie/:id/edit*") { halt 403 }
+      get("/movie/:id") { "movie #{@loaded}" }
+    end
+    lists = controller do
+      get("/movie/top-rated") { "top rated #{@loaded.inspect}" }
+      get("/movie/:id/edit/lists") { "lists" }
+    end
+    mock_app do
+      set :filter_overlap, :raise
+      mount lists, movies
+    end
+
+    expect { app.finalize! }.to raise_error(ArgumentError) { |error|
+      expect(error.message).to include("before /movie/:id/edit* in", "matches GET /movie/:id/edit/lists")
+      expect(error.message).not_to include("before /movie/:id*")
+    }
+  end
+
+  it "runs a filter marked overlap: :ok for its own routes only, as any other" do
+    movies = controller do
+      before("/movie/:id*", overlap: :ok) { @loaded = true }
+      get("/movie/:id") { "movie #{@loaded}" }
+    end
+    lists = controller { get("/movie/top-rated") { "top rated #{@loaded.inspect}" } }
+    mock_app do
+      set :filter_overlap, :raise
+      mount lists, movies
+    end
+
+    get "/movie/top-rated"
+    expect(body).to eq("top rated nil")
+    get "/movie/550"
+    expect(body).to eq("movie true")
+  end
+
+  it "takes only :ok for overlap:" do
+    expect { controller { before("/movie/*", overlap: true) { nil } } }.to raise_error(ArgumentError, /overlap: takes :ok/)
+  end
+
   describe "error handlers" do
     let(:missing) { Class.new(StandardError) }
 

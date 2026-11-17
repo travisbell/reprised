@@ -362,7 +362,9 @@ end
 - **Overlap check:** at boot, Reprised reports any controller filter whose pattern also matches another controller's
   route, since it won't run for that route as it would in Sinatra. Each pattern of an Array route is checked; a regexp
   route can't be, so it's listed as unchecked. `set :filter_overlap` to `:warn` (the default, printed whatever
-  `$VERBOSE` is), `:raise`, or `:ignore`.
+  `$VERBOSE` is), `:raise`, or `:ignore`. A filter that means to match other controllers' routes too, such as one that
+  loads a controller's record for its routes under `/movie/:id*` (which also matches another's `/movie/top-rated`),
+  says so with `overlap: :ok`, and the check leaves it out: `before("/movie/:id*", overlap: :ok) { load_movie }`.
 - **Settings are the app's:** controllers read them with `settings`, but can't `set` them or `use` middleware.
   A controller mounts in one app.
 - **Conditions:** a controller's route options compile in the app's context, so they can use the app's conditions.

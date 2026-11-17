@@ -341,9 +341,14 @@ module Reprised
       ensure_definable!
       raise ArgumentError, "#{type} filter needs a block" unless block
 
+      options = options.dup
+      overlap = options.delete(:overlap)
+      raise ArgumentError, "overlap: takes :ok, not #{overlap.inspect}" unless overlap.nil? || overlap == :ok
+
       @definitions[type] << Filter.new(
-        type:, path:, options: options.dup.freeze, conditions: take_pending_conditions,
-        action: compile_method("#{type.upcase} #{path || "*"}", block), owner: self, source_location: block.source_location
+        type:, path:, options: options.freeze, conditions: take_pending_conditions,
+        action: compile_method("#{type.upcase} #{path || "*"}", block), owner: self, source_location: block.source_location,
+        overlap: !overlap.nil?
       )
     end
 

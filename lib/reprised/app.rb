@@ -288,7 +288,8 @@ module Reprised
         raise ArgumentError, "filter_overlap must be one of #{FILTER_OVERLAP}" unless FILTER_OVERLAP.include?(mode)
         return if mode == :ignore
 
-        scoped = @filters.values.flatten.reject { it.owner <= App }
+        # A filter marked overlap: :ok means to match other controllers' routes too.
+        scoped = @filters.values.flatten.reject { it.owner <= App || it.overlap }
         # Only a controller's filters are scoped, so with none there's nothing to check (and nothing to expand).
         return if scoped.empty?
 
@@ -303,7 +304,7 @@ module Reprised
           patterns.grep(String).filter_map { sample_path(it) }.each do |path|
             @filter_routers.values.each do |filters|
               filters.each(:any, path) do |filter, _|
-                overlaps << [filter, route] unless filter.owner <= App || filter.owner == route.owner
+                overlaps << [filter, route] unless filter.owner <= App || filter.owner == route.owner || filter.overlap
               end
             end
           end
