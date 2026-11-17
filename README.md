@@ -115,6 +115,10 @@ options("/")         { ... }
 | `%r{/movie/(\d+)}` | `/movie/550` | `captures: ["550"]` |
 | `["/movies", "/films"]` | either path | |
 
+**Trailing slashes:** `set :strict_paths, false` (as in Sinatra) matches routes and filters against the path with its
+trailing slash left off, so `/movie/:id` answers `/movie/550` and `/movie/550/` without `/?`. A route whose pattern
+ends in a slash (`/movie/:id/`) then answers neither. `request.path` keeps the slash.
+
 A block that takes arguments gets the pattern's params in order, or a regexp's captures:
 
 ```ruby
@@ -424,6 +428,7 @@ environment matches, at definition time, and `development?`, `production?`, and 
 | `add_charset` | text types, JavaScript, XML | content types that get the charset |
 | `absolute_redirects` | `true` | redirect to absolute URLs |
 | `prefixed_redirects` | `false` | add the script name to redirects |
+| `strict_paths` | `true` | off: routes and filters match a path with its trailing slash left off, so `/movie/:id` answers `/movie/550/` too |
 | `method_override` | `false` | a POST's `_method` form param (or `X-HTTP-Method-Override`) names its method, as `Rack::MethodOverride` does |
 | `json_encoder` | `JSON` | anything with `generate` or `encode`, or a method name to call |
 | `json_content_type` | `:json` | `json`'s content type |

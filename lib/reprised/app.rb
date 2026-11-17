@@ -39,7 +39,7 @@ module Reprised
     Runtime = Data.define(
       :before, :after, :status_handlers, :sinatra_env, :scope_classes,
       :use_code, :dump_errors, :x_cascade, :raise_errors, :public_folder, :static_cache_control, :static_headers,
-      :method_override, :show_exceptions, :show_exceptions_from, :editor, :root
+      :method_override, :show_exceptions, :show_exceptions_from, :editor, :root, :strict_paths
     )
 
     FINALIZE_LOCK = Mutex.new
@@ -265,7 +265,7 @@ module Reprised
           static_cache_control: settings.static_cache_control || nil, static_headers: settings.static_headers || {},
           method_override: settings.method_override? ? true : false,
           show_exceptions:, show_exceptions_from: (ExceptionPage.ranges(settings.show_exceptions_from) if show_exceptions),
-          editor: settings.editor, root: settings.root
+          editor: settings.editor, root: settings.root, strict_paths: settings.strict_paths? ? true : false
         )
       end
 
@@ -366,6 +366,9 @@ module Reprised
     # A POST's _method form param (or X-HTTP-Method-Override header) names the method the routes see, as in Sinatra.
     set :method_override, false
     set :prefixed_redirects, false
+    # Off: a trailing slash is left off the path routes and filters are matched against, so /movie/:id answers
+    # /movie/550/ too, as in Sinatra.
+    set :strict_paths, true
     set :mustermann_opts, {}
     set :matcher, :index
     set :json_encoder, ::JSON

@@ -125,7 +125,7 @@ module Reprised
     def route!
       pass_block = nil
 
-      @app.router.each(env["REQUEST_METHOD"], path) do |route, route_params|
+      @app.router.each(env["REQUEST_METHOD"], route_path) do |route, route_params|
         response.delete_header("content-type") unless @pinned_content_type || response.headers.empty?
         enter(route.owner)
 
@@ -163,6 +163,15 @@ module Reprised
     end
 
     def path = env["PATH_INFO"].to_s
+
+    # The path routes and filters are matched against: the path, without its trailing slash when strict_paths is off
+    # (as Sinatra does; "/" stays).
+    def route_path
+      path = self.path
+      return path if @runtime.strict_paths || path.length < 2 || !path.end_with?("/")
+
+      path.delete_suffix("/")
+    end
 
     # The exception page's body for +boom+, with its content type set, or nil for a client it isn't shown to (or if it
     # can't render, which leaves the exception to the error handlers).
@@ -279,7 +288,7 @@ module Reprised
     # again afterwards.
     def filter!(type, owner = nil)
       home = @route&.owner || @app
-      @app.filter_router(type).each(:any, path) do |filter, filter_params|
+      @app.filter_router(type).each(:any, route_path) do |filter, filter_params|
         if owner
           next unless filter.owner == owner
         else

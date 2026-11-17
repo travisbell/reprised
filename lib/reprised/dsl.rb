@@ -13,7 +13,7 @@ module Reprised
     IGNORED_SETTINGS = [
       :app_file, :bind, :empty_path_info, :host_authorization, :lock, :logging, :port, :protection,
       :public_dir, :quiet, :run, :server, :session_secret, :session_store,
-      :sessions, :strict_paths, :threaded, :traps
+      :sessions, :threaded, :traps
     ].freeze
 
     # The blocks compiled methods were defined from, by method (held only as long as the method is).
