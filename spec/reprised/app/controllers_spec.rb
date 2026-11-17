@@ -106,6 +106,28 @@ RSpec.describe "Controllers" do
       expect(body).to eq("app's greeting")
     end
 
+    it "lets a controller's helpers override the app's too, and its methods override both" do
+      ranked = controller do
+        helpers do
+          def greeting = "controller's helper"
+          def farewell = "controller's helper"
+        end
+        def farewell = "controller's method"
+        get("/ranked") { "#{greeting}, #{farewell}" }
+      end
+      mock_app do
+        helpers do
+          def greeting = "app's helper"
+          def farewell = "app's helper"
+        end
+        mount ranked
+      end
+
+      get "/ranked"
+
+      expect(body).to eq("controller's helper, controller's method")
+    end
+
     it "keeps a controller's helpers from other controllers" do
       expect { get "/person" }.to raise_error(NameError, /movie_title/)
     end

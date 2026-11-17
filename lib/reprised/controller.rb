@@ -61,7 +61,12 @@ module Reprised
 
         @app = app
         include(app.helpers_module)
+        # Then its own, so they come before the app's: a controller's helpers override global ones, as its methods do.
+        include(@helpers_module) if @helpers_module
       end
+
+      # A controller's helpers module is included when it's mounted, after the app's (an app's, as it's made).
+      def include_helpers_module? = self <= App || !@app.nil?
 
       # Whether +app+'s name now names another class, as it does once the app is reloaded.
       private def replaced?(app)

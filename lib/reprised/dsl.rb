@@ -205,15 +205,18 @@ module Reprised
       helpers_module.include(*modules) if modules.any?
     end
 
-    # The module holding this class's helpers, included in it.
+    # The module holding this class's helpers, included in it (a controller's once it's mounted, after the app's).
     def helpers_module
       @helpers_module ||= Module.new.tap do |mod|
         owner = self
         mod.extend(HelpersModule)
         mod.define_singleton_method(:inspect) { "#{owner}::Helpers" }
-        include(mod)
+        include(mod) if include_helpers_module?
       end
     end
+
+    # Whether helpers_module is included as soon as it's made.
+    def include_helpers_module? = true
 
     # What a helpers module does besides hold methods. In Sinatra, `helpers` includes modules into the app class
     # itself, so one that also adds class methods to whatever includes it (ActiveSupport::Concern's ClassMethods, as

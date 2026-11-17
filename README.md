@@ -352,7 +352,8 @@ end
   so the order doesn't matter, or mount those controllers by name.
 - **Helpers are methods.** A request's scope is an instance of the matched route's controller, so a controller's
   methods (and its `helpers`) are visible to its own routes and templates only, alongside the app's helpers. `private`,
-  `super`, and `prepend` work as they normally do, and a controller can override a global helper.
+  `super`, and `prepend` work as they normally do. A controller's methods come first, then its `helpers`, then the
+  app's, so a controller can override a global helper with either.
 - **The app's helpers are global:** `helpers do ... end` and `helpers SomeModule` on the app reach every controller.
   `set :helper_isolation, false` makes controllers' `helpers` global too, as Sinatra extensions' are, which is useful
   while migrating. A controller's plain `def`s stay its own either way.
