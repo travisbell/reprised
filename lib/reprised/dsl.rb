@@ -10,6 +10,7 @@ module Reprised
     VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "LINK", "UNLINK"].freeze
     # A route's or filter's options when it has none, shared rather than an empty Hash each.
     NO_OPTIONS = {}.freeze
+    NO_CONDITIONS = [].freeze
 
     # Sinatra settings Reprised doesn't act on: each belongs in config.ru middleware or is gone. Setting one warns.
     IGNORED_SETTINGS = [
@@ -315,7 +316,7 @@ module Reprised
       end.flatten.freeze
     end
 
-    def take_pending_conditions = @pending_conditions.slice!(0..).freeze
+    def take_pending_conditions = @pending_conditions.empty? ? NO_CONDITIONS : @pending_conditions.slice!(0..).freeze
 
     def find_condition(name)
       ancestors.each do |ancestor|

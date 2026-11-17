@@ -23,9 +23,11 @@ module Reprised
   #
   # [:index] (default) Indexes each pattern by its leading literal segments ("/movie/:id" under "movie") and, for a
   #          path, tries only the patterns under the segments it starts with, plus those with no literal prefix, in
-  #          definition order. Each candidate is matched by its own Mustermann pattern, so matching is exactly what
-  #          Sinatra does; only the candidate list is shorter. A path containing "%" tries every pattern, since
-  #          Mustermann matches literals against their percent-encoded forms ("/m%6Fvie").
+  #          definition order. A pattern made of literal segments and whole-segment params (nearly every route) is
+  #          matched by the index itself, and needs no Mustermann pattern (see SimplePattern); any other is matched by
+  #          its own Mustermann pattern. Either way matching is exactly what Sinatra does; only the candidate list is
+  #          shorter. A path containing "%" tries every pattern, since Mustermann matches literals against their
+  #          percent-encoded forms ("/m%6Fvie").
   # [:trie]  Mustermann::Set's trie (Mustermann 4 only). Experimental: Mustermann 4.0.1's trie misses several Sinatra
   #          pattern forms ("/a/?" on "/a", "/a/*" on "/a/", "/tv/:id/edit/?*"), see docs/upstream/mustermann-trie.md.
   class Router
@@ -48,6 +50,8 @@ module Reprised
       @lanes = {}
       # What was added to each lane, in order, until finalize! compares them.
       @additions = {}
+      # The SimplePattern for each simple pattern String added, so lanes share one. (Until finalize!.)
+      @simple_patterns = {}
       @size = 0
     end
 
@@ -76,6 +80,7 @@ module Reprised
     def finalize!
       additions = @additions
       @additions = nil
+      @simple_patterns = nil
       kept = []
       @lanes.keys.each do |lane|
         twin = kept.find { same_additions?(additions[it], additions[lane]) }
@@ -131,8 +136,16 @@ module Reprised
       end
     end
 
+    # A Mustermann pattern for +pattern+, unless it's a String the index matcher matches as a SimplePattern (as nearly
+    # every route is): that needs no Mustermann pattern at all, which saves its regexps and caches.
     def compile(pattern)
-      pattern.is_a?(Mustermann::Pattern) ? pattern : Mustermann.new(pattern, **@pattern_options)
+      return pattern if pattern.is_a?(Mustermann::Pattern)
+
+      if pattern.is_a?(String) && @matcher == :index && @pattern_options.empty?
+        simple = (@simple_patterns[pattern] ||= SimplePattern.for(pattern) || false)
+        return simple if simple
+      end
+      Mustermann.new(pattern, **@pattern_options)
     end
 
     # Tracks Array patterns already yielded for a path, so each matches once, at its first matching pattern.
@@ -148,10 +161,11 @@ module Reprised
       end
     end
 
-    # A Sinatra pattern made only of literal segments and whole-segment params, like "/tv/:id/season/:number/?". It's
-    # matched with a capture-free regexp, which allocates nothing (most candidates don't match), and its params are
-    # taken only once it has. It's used only for paths with no "%", "?" or "#", where Mustermann would decode nothing, so
-    # the params are the same strings Mustermann would give.
+    # A Sinatra pattern made only of literal segments and whole-segment params, like "/tv/:id/season/:number/?". A plain
+    # path (no "%", "?" or "#") is matched with a capture-free regexp, which allocates nothing (most candidates don't
+    # match), and its params are taken only once it has. A path with "%" is matched segment by segment, each one
+    # decoded, as Mustermann matches a literal in its percent-encoded forms too and decodes params. Either way the
+    # params are what Mustermann would give, so a router needs no Mustermann pattern for it.
     class SimplePattern
       SHAPE = %r{\A((?:/(?:[\w\-.~]+|:[A-Za-z_]\w*))+)(/\?|/)?\z}
       PARAM = /\A:([A-Za-z_]\w*)\z/
@@ -172,17 +186,19 @@ module Reprised
       # The paths this pattern matches, if it has no params (so a path can be compared whole), else nil.
       attr_reader :paths
 
+      # The segments a router indexes it under: its literal segments, and nil for each param.
+      def index_segments = @literals
+
       # +segments+: Symbols for literal segments (as Symbols, so they can't be confused with param names) and Strings
       # for param names. +trailing+: whether the path may (:optional), must (:required), or mustn't (:forbidden) end
       # with "/".
       def initialize(segments, trailing)
         @segments = segments
         @size = segments.size
+        @trailing = trailing
         @names = segments.grep(String).freeze
         literals = segments.map { it.is_a?(Symbol) ? it.name : nil }
         @literals = literals.freeze
-        ending = { optional: "/?", required: "/", forbidden: "" }.fetch(trailing)
-
         if @names.empty?
           base = segments.empty? ? "" : "/#{literals.join("/")}"
           @paths = case trailing
@@ -190,16 +206,54 @@ module Reprised
           when :required then ["#{base}/"]
           else [base, "#{base}/"].reject(&:empty?)
           end.freeze
-        else
-          check = literals.map { it ? Regexp.escape(it) : "[^/]+" }
-          @check = Regexp.new("\\A/#{check.join("/")}#{ending}\\z")
         end
         freeze
       end
 
-      # Params for +path+ (a plain path), or nil. Once it matches, each param is the segment at its position.
+      # Params for +path+ (one with "%"), or nil: each segment decoded, then compared with its literal or taken as its
+      # param. A "?" or "#" can't be in any segment, and an encoded "/" stays in its segment, as in Mustermann.
+      def decoded_params(path)
+        return if !path.start_with?("/") || path.include?("?") || path.include?("#")
+
+        trailing = path.length > 1 && path.end_with?("/")
+        return if trailing ? @trailing == :forbidden : @trailing == :required && path != "/"
+
+        segments = (trailing ? path[1...-1] : path[1..]).split("/", -1)
+        return unless segments.size == @size
+
+        params = {}
+        segments.each_with_index do |segment, index|
+          return if segment.empty?
+
+          value = URI_PARSER.unescape(segment)
+          if (literal = @literals[index])
+            return unless value == literal
+          else
+            params[@segments[index]] = value
+          end
+        end
+        params
+      end
+
+      # Params for +path+, a plain path that reached this pattern in a router's index, or nil. Reaching it, the path
+      # matched each of its literal segments and had a segment for each param, so all that's left is that the path has no
+      # more segments, and a trailing "/" only if the pattern allows one. (So there's no regexp to match, or to keep.)
       def params(path)
-        return unless @check.match?(path)
+        length = path.bytesize
+        position = 1
+        @size.times do
+          return if position > length # fewer segments
+
+          segment_end = path.byteindex("/", position) || length
+          return if segment_end == position # an empty one
+
+          position = segment_end + 1
+        end
+        case length - position
+        when -1 then return if @trailing == :required # no trailing "/"
+        when 0 then return if @trailing == :forbidden # a trailing "/"
+        else return # more segments
+        end
 
         params = {}
         position = 1
@@ -222,6 +276,9 @@ module Reprised
       Candidate = Data.define(:entry, :pattern, :regexp, :simple, :check, :order)
 
       class Node
+        NO_CHILDREN = {}.freeze
+        NO_CANDIDATES = [].freeze
+
         # +candidates+ are the patterns indexed here; +reachable+, once finalized, are those plus every ancestor's, in
         # definition order: all the patterns a path reaching this node can match. +wildcard+ is the child for any
         # non-empty segment (a whole-segment :param).
@@ -245,8 +302,9 @@ module Reprised
           @reachable_with_wildcard = (@reachable | sibling.reachable).sort_by!(&:order).freeze if sibling
           @wildcard&.finalize!(@reachable)
           @children.each_value { it.finalize!(@reachable, @wildcard) }
-          @children.freeze
-          @candidates.freeze
+          # A leaf (most nodes) shares one empty Hash and Array rather than keep its own.
+          @children = @children.empty? ? NO_CHILDREN : @children.freeze
+          @candidates = @candidates.empty? ? NO_CANDIDATES : @candidates.freeze
           freeze
         end
       end
@@ -270,7 +328,9 @@ module Reprised
       end
 
       def add(pattern, entry)
-        simple = SimplePattern.for(pattern.to_s) if @simple && pattern.instance_of?(Mustermann::Sinatra)
+        simple = if pattern.is_a?(SimplePattern) then pattern
+        elsif @simple && pattern.instance_of?(Mustermann::Sinatra) then SimplePattern.for(pattern.to_s)
+        end
         check = pattern.regexp if pattern.respond_to?(:regexp)
         candidate = Candidate.new(entry:, pattern:, regexp: pattern.is_a?(Mustermann::Regular), simple:, check:, order: @all.size)
         node = index_segments(pattern).reduce(@root) do |parent, segment|
@@ -301,6 +361,8 @@ module Reprised
             else
               candidate.simple.params(path)
             end
+          elsif candidate.simple && candidate.pattern.equal?(candidate.simple)
+            candidate.simple.decoded_params(path)
           elsif candidate.check && !candidate.check.match?(path)
             nil
           elsif candidate.regexp
@@ -380,6 +442,7 @@ module Reprised
       # literal segments it starts with. Anything else sits at the root.
       def index_segments(pattern)
         case pattern
+        when SimplePattern then pattern.index_segments.map { it || WILDCARD }
         when Mustermann::Sinatra
           return [] unless pattern.instance_of?(Mustermann::Sinatra) && (source = pattern.to_s).start_with?("/")
 

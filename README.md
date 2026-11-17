@@ -1001,29 +1001,30 @@ Each framework is used the way it's meant to be; the setup and the harness are i
 
 | Workload | Reprised | Sinatra 4.2 | Roda | Hanami |
 |---|---|---|---|---|
-| hello | 1.81 (13) | 5.02 (56) | **0.76** (11) | 14.89 (227) |
-| params | 3.68 (24) | 7.72 (84) | **2.76** (36) | 13.30 (174) |
-| filters | 3.43 (23) | 8.79 (101) | **1.32** (18) | 17.17 (247) |
-| 1,000 routes | 2.40 (15.5) | 167.08 (1,964) | **1.16** (15.5) | 17.41 (231) |
-| 404 | 2.19 (13.3) | 357.24 (4,081) | 0.89 (12) | **0.87** (7.3) |
-| ERB | **6.24** (39) | 13.59 (122) | 8.06 (48) | n/a |
+| hello | 1.80 (13) | 5.06 (56) | **0.76** (11) | 15.09 (227) |
+| params | 3.76 (24) | 7.72 (84) | **2.94** (36) | 13.91 (174) |
+| filters | 3.58 (23) | 8.96 (101) | **1.32** (18) | 16.82 (247) |
+| 1,000 routes | 2.37 (15.5) | 167.08 (1,964) | **1.16** (15.5) | 16.21 (231) |
+| 404 | 2.02 (13.3) | 366.39 (4,081) | 0.90 (12) | **0.87** (7.3) |
+| ERB | **6.27** (39) | 13.91 (122) | 8.48 (48) | n/a |
 
 Memory, as the Ruby heap holds it after a full GC (and, for the library, resident memory too):
 
 | | Reprised | Sinatra 4.2 | Roda | Hanami |
 |---|---|---|---|---|
-| Library loaded: heap / RSS | 855 KB / 4.9 MB | 1.2 MB / 12.8 MB | **549 KB / 3.0 MB** | 923 KB / 5.4 MB |
-| A one-route app | 13 KB | 28 KB | **8 KB** | 65 KB |
-| A 1,000-route app | 4.0 MB | 3.5 MB | **157 KB** | 1.8 MB |
+| Library loaded: heap / RSS | 856 KB / 5.0 MB | 1.2 MB / 12.7 MB | **549 KB / 3.0 MB** | 923 KB / 5.3 MB |
+| A one-route app | 11 KB | 28 KB | **8 KB** | 65 KB |
+| A 1,000-route app | 1.1 MB | 3.5 MB | **157 KB** | 1.8 MB |
 | Growth under load | none | none | none | none |
 
 Reprised is 2–3× faster than Sinatra on small apps, and much faster with many routes, since Sinatra tries routes one by
 one and a 404 tries them all. Roda is faster outside templates. Reprised spends what's left on Sinatra's model: filters,
 conditions, error handlers, `pass`, controller scopes, and case-insensitive headers.
 
-A large app's memory is mostly its Mustermann patterns (about 2.3 KB a route), which Sinatra holds too, then Reprised's
-route index (about 1 KB a route): an app's GET and HEAD routes share one index unless it has `head` routes of its own.
-Roda's `hash_branches` keeps no patterns at all.
+Reprised matches a route made of literal segments and whole-segment params (nearly every route) with its own index,
+without a Mustermann pattern, which saves about 2.3 KB a route that Sinatra spends; a large app holds about 1 KB a route,
+for its index and each route's compiled block. An app's GET and HEAD routes share one index unless it has `head` routes
+of its own. Roda's `hash_branches` keeps no patterns at all.
 
 ## Development
 

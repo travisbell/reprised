@@ -232,6 +232,9 @@ module Reprised
         end
         definitions.map do |definition|
           options = definition.owner.compile_conditions(definition.options, self)
+          # With no options to compile, the definition is its own compiled form.
+          next definition if options.empty?
+
           definition.with(conditions: (options + definition.conditions).freeze)
         end
       end

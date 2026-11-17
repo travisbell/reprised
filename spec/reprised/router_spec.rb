@@ -109,7 +109,10 @@ RSpec.describe Reprised::Router do
       paths = [
         "/", "//", "/movie", "/movie/", "/movie//", "/movie/550", "/movie/550/", "/movie/550/cast", "/movie/550/cast/",
         "/movie/5.5", "/tv/1/season/2", "/tv/1/season/2/", "/tv//season/2", "/manifest.json", "/manifestxjson",
-        "/a/1/2", "/a/1/b/2", "/caf%C3%A9", "/movie/caf%C3%A9", "/movie/a?b", "/MOVIE/1", "movie/1", ""
+        "/a/1/2", "/a/1/b/2", "/caf%C3%A9", "/movie/caf%C3%A9", "/movie/a?b", "/MOVIE/1", "movie/1", "",
+        # Percent-encoded: literals in their encoded forms, params decoded (an encoded "/" staying in its segment)
+        "/m%6Fvie/550", "/m%6fvie/550/c%61st", "/movie/a%2Fb", "/movie/550%2F", "/movie%2F550", "/movie/%zz", "/movie/%",
+        "/movie/a%20b/cast", "/t%76/1/season/2/", "/movie/550%23x", "/movie/550#x", "/u/b%6Fb-x"
       ]
       patterns.each do |pattern|
         # Mustermann 3 refuses some (a repeated capture name); there's nothing to compare for those.
@@ -121,6 +124,16 @@ RSpec.describe Reprised::Router do
           expect(routes.each("GET", path).to_a.dig(0, 1)).to eq(expected), "#{pattern} on #{path.inspect}"
         end
       end
+    end
+
+    it "builds no Mustermann pattern for a simple pattern, only for the others" do
+      routes = router do
+        add("GET", "/movie/:id/?", :show)
+        add("GET", "/files/*", :files)
+      end
+      candidates = routes.instance_variable_get(:@lanes)["GET"].instance_variable_get(:@all)
+
+      expect(candidates.map { it.pattern.class }).to eq([Reprised::Router::SimplePattern, Mustermann::Sinatra])
     end
 
     it "matches a filter without a path everywhere" do

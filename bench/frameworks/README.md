@@ -47,22 +47,23 @@ hanami-controller 2.3.2, all on Mustermann 3.1.1. Times under 3 µs vary by abou
 
 | workload | Reprised | Sinatra | Roda | Hanami |
 |---|---|---|---|---|
-| hello | 1.81 µs (13) | 5.02 (56) | **0.76** (11) | 14.89 (227) |
-| params | 3.68 (24) | 7.72 (84) | **2.76** (36) | 13.30 (174) |
-| filters | 3.43 (23) | 8.79 (101) | **1.32** (18) | 17.17 (247) |
-| large table | 2.40 (15.5) | 167.08 (1,964) | **1.16** (15.5) | 17.41 (231) |
-| 404 | 2.19 (13.3) | 357.24 (4,081) | 0.89 (12) | **0.87** (7.3) |
-| erb | **6.24** (39) | 13.59 (122) | 8.06 (48) | n/a |
+| hello | 1.80 µs (13) | 5.06 (56) | **0.76** (11) | 15.09 (227) |
+| params | 3.76 (24) | 7.72 (84) | **2.94** (36) | 13.91 (174) |
+| filters | 3.58 (23) | 8.96 (101) | **1.32** (18) | 16.82 (247) |
+| large table | 2.37 (15.5) | 167.08 (1,964) | **1.16** (15.5) | 16.21 (231) |
+| 404 | 2.02 (13.3) | 366.39 (4,081) | 0.90 (12) | **0.87** (7.3) |
+| erb | **6.27** (39) | 13.91 (122) | 8.48 (48) | n/a |
 
 µs per request (allocations per request). Fastest in bold.
 
 | memory | Reprised | Sinatra | Roda | Hanami |
 |---|---|---|---|---|
-| library: heap / RSS | 855 KB / 4.9 MB | 1.2 MB / 12.8 MB | **549 KB / 3.0 MB** | 923 KB / 5.4 MB |
-| hello app | 13 KB | 28 KB | **8 KB** | 65 KB |
-| erb app | **27 KB** | 40 KB | 51 KB | n/a |
-| large table app (1,000 routes) | 4.0 MB | 3.5 MB | **157 KB** | 1.8 MB |
+| library: heap / RSS | 856 KB / 5.0 MB | 1.2 MB / 12.7 MB | **549 KB / 3.0 MB** | 923 KB / 5.3 MB |
+| hello app | 11 KB | 28 KB | **8 KB** | 65 KB |
+| erb app | **25 KB** | 40 KB | 51 KB | n/a |
+| large table app (1,000 routes) | 1.1 MB | 3.5 MB | **157 KB** | 1.8 MB |
 | growth after the timed run | none | none | none | none |
 
-A large app's heap in Reprised is mostly its Mustermann patterns (about 2.3 KB a route, which Sinatra holds too), then
-its route index (about 1 KB a route) and each route's compiled block. Roda's `hash_branches` keeps no patterns at all.
+Reprised matches a route made of literal segments and whole-segment params with its own index, without a Mustermann
+pattern (about 2.3 KB a route, which Sinatra holds); what a large app keeps, about 1 KB a route, is that index and each
+route's compiled block. Roda's `hash_branches` keeps no patterns at all.
