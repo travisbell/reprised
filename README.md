@@ -663,7 +663,8 @@ Application.preload!
 - **`rackup(self)`** in config.ru runs the `on_worker_start` hooks (once a process), has the `on_shutdown` hooks run
   at exit, registers the `warmup` hooks, and adds the middleware, the mounted apps, and the app: the app class, or a
   `Reprised::Reloader` for it with `reload` set (`reload_files` names files that define an app the loader doesn't
-  load, from the project's root).
+  load, from the project's root). `rackup(builder, start_worker: false)` (or `to_app(start_worker: false)`) skips the
+  worker and shutdown hooks, for a stack served outside a worker, such as a system test's server.
 - **`preload!`** boots, runs the `before_fork` hooks, finalizes the app (unless it's reloaded), and compacts the
   heap with `Process.warmup`, so the workers share as much memory as they can.
 

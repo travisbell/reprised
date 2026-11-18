@@ -222,6 +222,23 @@ RSpec.describe Reprised::Application do
       expect(exits.size).to eq(1)
     end
 
+    it "doesn't run the worker's or shutdown hooks with start_worker: false" do
+      app = application(<<~RUBY)
+        config.on_worker_start { (ApplicationSpec::EVENTS << :worker_start) }
+        config.on_shutdown { (ApplicationSpec::EVENTS << :shutdown) }
+      RUBY
+      stub_const("ApplicationSpec::EVENTS", [])
+      allow(app).to receive(:at_exit)
+      app.boot!
+      define_app
+
+      rack_app = app.to_app(start_worker: false)
+
+      expect(request(rack_app).last).to eq("home")
+      expect(ApplicationSpec::EVENTS).to be_empty
+      expect(app).not_to have_received(:at_exit)
+    end
+
     it "runs the app in a Reprised::Reloader when reload is set" do
       path = write("app.rb", "class #{ns}::App < Reprised::App\n  get('/') { 'reloadable' }\nend\n")
       app = application("config.reload = true; config.reload_files = ['app.rb']")

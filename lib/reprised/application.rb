@@ -107,14 +107,15 @@ module Reprised
 
       # Builds the Rack stack in +builder+ (config.ru's self): runs the on_worker_start hooks (once a process), has the
       # on_shutdown hooks run at exit, registers the warmup hooks, and adds the middleware, the mounted apps, and the
-      # app.
+      # app. With start_worker: false the hooks don't run, for a stack served outside a worker (a test server), where
+      # the services they start have no event loop to run in.
       #
       #   # config.ru
       #   require_relative "config/environment"
       #   Application.rackup(self)
-      def rackup(builder)
+      def rackup(builder, start_worker: true)
         boot!
-        start_worker!
+        start_worker! if start_worker
         warmups = config.hooks(:warmup)
         builder.warmup { |app| warmups.each { it.call(app) } } if warmups.any?
         config.middleware.each { |entry| builder.use(entry.resolve, *entry.args, **entry.options, &entry.block) }
@@ -124,7 +125,7 @@ module Reprised
       end
 
       # The whole Rack stack, as config.ru would build it.
-      def to_app = rackup(Rack::Builder.new).to_app
+      def to_app(start_worker: true) = rackup(Rack::Builder.new, start_worker: start_worker).to_app
 
       # Gives the app being defined the configuration's settings, if it's config.app. Reprised::App calls it.
       def configure_app(app)
