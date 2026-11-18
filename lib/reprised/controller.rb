@@ -33,6 +33,7 @@ module Reprised
     # Sinatra::Base includes them. They're private, and the helpers below (and the app's) take precedence.
     include Rack::Utils
     include Helpers
+    include CSRF::Helpers
     include Templates
     include Template::Methods
 

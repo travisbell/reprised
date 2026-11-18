@@ -13,4 +13,15 @@ module Reprised
   class BadRequest < Error
     def http_status = 400
   end
+
+  # A request that may have been forged (Reprised::CSRF). Handled by `error(403)` and `error(Reprised::ForgedRequest)`.
+  class ForgedRequest < Error
+    def http_status = 403
+  end
+
+  # A browser's unsafe request that another origin made (`set :csrf, true`).
+  class CrossOriginRequest < ForgedRequest; end
+
+  # A request without the session's CSRF token, where one was needed (`verify_csrf_token!`, `csrf: :token`).
+  class InvalidCSRFToken < ForgedRequest; end
 end

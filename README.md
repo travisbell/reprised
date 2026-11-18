@@ -44,6 +44,7 @@ WebSockets, ActionView forms, and Phlex components. `bundle exec rake demos` run
 - [Responses](#responses)
 - [Filters](#filters)
 - [Errors](#errors)
+- [CSRF protection](#csrf-protection)
 - [Controllers](#controllers)
 - [Settings](#settings)
 - [Templates](#templates)
@@ -292,7 +293,8 @@ class Forbidden < Reprised::Error
 end
 ```
 
-Reprised raises `Reprised::NotFound` (404), `Reprised::BadRequest` (400), and `Reprised::Timeout` (503). With the
+Reprised raises `Reprised::NotFound` (404), `Reprised::BadRequest` (400), `Reprised::Timeout` (503), and
+`Reprised::ForgedRequest`'s two kinds (403, [CSRF protection](#csrf-protection)). With the
 `use_code` setting, a `Reprised::Error`'s `code` gives the status too.
 
 **Settings** for errors:
@@ -319,6 +321,63 @@ page rather than the app's error handlers, as Sinatra's `show_exceptions` does:
 It's shown only to requests from `show_exceptions_from` (by `REMOTE_ADDR`, loopback by default):
 `set :show_exceptions_from, ["127.0.0.0/8", "::1/128", "172.16.0.0/12"]` adds Docker's networks.
 `set :show_exceptions, :after_handler` lets the app's handlers answer first, and shows the page when none does.
+
+## CSRF protection
+
+Reprised protects against cross-site request forgery in two ways: a check of where each request came from, which
+covers every route at once, and tokens, for the routes that want one as well.
+
+**The cross-origin check** turns away an unsafe request (anything but GET, HEAD, and OPTIONS) that a browser made from
+another origin, with a `Reprised::CrossOriginRequest` (403):
+
+```ruby
+set :csrf, true
+set :csrf_trusted_origins, ["https://accounts.example.com"]   # their requests pass too
+
+post("/login/provider/callback", csrf: false) { ... }         # a route another site's page posts to
+```
+
+- A browser says where a request came from in its `Sec-Fetch-Site` header: `same-origin`, or `none` (the user typed the
+  URL), passes, and `same-site` and `cross-site` don't. Where a browser doesn't send it, its `Origin` header must name
+  the request's host. The check needs no tokens and no changes to pages, and is the one Go's
+  `http.CrossOriginProtection` makes.
+- A request with neither header isn't from a browser (a webhook, a script, an API client), so it isn't one that could
+  be forged, and passes.
+- It runs after the before filters, right before the route's body, so the 403's error page has what the filters set
+  up. A request no route answers is a 404 as before.
+- `set :csrf, :report` lets every request through and reports the ones it would turn away: to `env["rack.errors"]`, or
+  wherever the app's `self.report_forged_request!(error, env)` sends them. Run it in production first, to find the
+  routes other sites post to before turning the check on.
+
+**Tokens** are kept in the session (`env["rack.session"]`, from your session middleware). A page puts one in a form,
+and a route checks the request sent it back, as the `authenticity_token` param or an `X-CSRF-Token` header:
+
+```erb
+<form method="post" action="/settings/delete">
+  <%= csrf_field %>   <!-- <input type="hidden" name="authenticity_token" value="..."> -->
+</form>
+<%= csrf_meta_tags %> <!-- csrf-param and csrf-token, for scripts -->
+```
+
+```ruby
+post("/settings/delete", csrf: :token) { ... }   # a Reprised::InvalidCSRFToken (403) without the token
+
+post "/report" do
+  verify_csrf_token!(JSON.parse(params["data"])["token"])   # or check one sent another way
+  ...
+end
+```
+
+- `csrf_token` is the session's token, masked afresh each time it's called (so compressing it alongside text an
+  attacker chose, as in BREACH, doesn't reveal it). Every masked copy is valid, and so is the session's token as it
+  is.
+- `valid_csrf_token?` checks one without raising, and `reset_csrf_token!` gives the session a new one the next time one
+  is asked for (do it on signing in).
+- A route's `csrf: :token` is checked whatever the `csrf` setting, `:report` included.
+- `csrf_session_key` (`"_csrf_token"`) and `csrf_param` (`"authenticity_token"`) are Rails' names, so a session from
+  a Rails or Sinatra app that used them keeps its token.
+
+Both are `Reprised::ForgedRequest`s, for `error(Reprised::ForgedRequest)` or `error(403)`.
 
 ## Controllers
 
@@ -450,6 +509,10 @@ environment matches, at definition time, and `development?`, `production?`, and 
 | `matcher` | `:index` | `:trie` is an experimental alternative, on Mustermann 4 |
 | `sinatra_env` | `false` | also set `env["sinatra.route"]` and `env["sinatra.error"]` |
 | `cookie_options` | (none) | defaults for new cookies |
+| `csrf` | `false` | `true` turns away browsers' unsafe requests from other origins, `:report` reports them ([CSRF protection](#csrf-protection)) |
+| `csrf_trusted_origins` | `[]` | origins the cross-origin check lets through |
+| `csrf_session_key` | `"_csrf_token"` | where the session keeps the CSRF token |
+| `csrf_param` | `"authenticity_token"` | the param a form sends the token as |
 
 **Public files:** as in Sinatra, a GET or HEAD request for a file in the public folder is answered with the file
 (`send_file`, with `static_cache_control` and `static_headers`) before any filter runs, and after filters don't run for
@@ -980,7 +1043,9 @@ Most route code moves over unchanged. What changes:
   routes run in an instance of the controller.
 - **Protection isn't on by default.** Sinatra adds `Rack::Protection` (frame options, origin checks, JSON CSRF, path
   traversal, IP spoofing, and XSS headers) unless it's disabled, and host authorization in development. Reprised doesn't.
-  To keep Sinatra's defaults, add the rack-protection gem and, in config.ru:
+  `set :csrf, true` ([CSRF protection](#csrf-protection)) does the job of its origin check (`HttpOrigin`), for every
+  browser; `JsonCsrf`, which guards GET responses, is another matter. To keep Sinatra's defaults, add the
+  rack-protection gem and, in config.ru:
 
   ```ruby
   require "rack/protection"

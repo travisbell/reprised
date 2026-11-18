@@ -2,6 +2,7 @@
 
 require_relative "reprised/version"
 require_relative "reprised/errors"
+require_relative "reprised/csrf"
 require_relative "reprised/async"
 require_relative "reprised/negotiation"
 require_relative "reprised/router"

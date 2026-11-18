@@ -39,7 +39,8 @@ module Reprised
     Runtime = Data.define(
       :before, :after, :status_handlers, :sinatra_env, :scope_classes,
       :use_code, :dump_errors, :x_cascade, :raise_errors, :public_folder, :static_cache_control, :static_headers,
-      :method_override, :show_exceptions, :show_exceptions_from, :editor, :root, :strict_paths
+      :method_override, :show_exceptions, :show_exceptions_from, :editor, :root, :strict_paths, :csrf,
+      :csrf_trusted_origins
     )
 
     FINALIZE_LOCK = Mutex.new
@@ -188,6 +189,12 @@ module Reprised
         env["rack.errors"]&.puts(["#{Time.now.strftime("%Y-%m-%d %H:%M:%S")} - #{boom.class} - #{message}:", *details, *boom.backtrace].join("\n\t"))
       end
 
+      # Reports a request the cross-origin check would have turned away, with `set :csrf, :report`: by default to
+      # env["rack.errors"]. Override it to log elsewhere.
+      def report_forged_request!(error, env)
+        env["rack.errors"]&.puts("Reprised: would turn away #{env["REQUEST_METHOD"]} #{env["PATH_INFO"]}: #{error.message}")
+      end
+
       # Every route, in the order they're tried: the app's own and its mounted controllers', with conditions compiled.
       # Finalizes the app. Used by `reprised routes` and for warming up.
       def routes = @routes || (finalize! && @routes)
@@ -268,8 +275,16 @@ module Reprised
           static_cache_control: settings.static_cache_control || nil, static_headers: settings.static_headers || {},
           method_override: settings.method_override? ? true : false,
           show_exceptions:, show_exceptions_from: (ExceptionPage.ranges(settings.show_exceptions_from) if show_exceptions),
-          editor: settings.editor, root: settings.root, strict_paths: settings.strict_paths? ? true : false
+          editor: settings.editor, root: settings.root, strict_paths: settings.strict_paths? ? true : false,
+          csrf: csrf_mode, csrf_trusted_origins: CSRF.normalize_origins(settings.csrf_trusted_origins)
         )
+      end
+
+      def csrf_mode
+        mode = settings.csrf
+        raise ArgumentError, "csrf must be one of #{CSRF::SETTINGS}, not #{mode.inspect}" unless CSRF::SETTINGS.include?(mode)
+
+        mode || nil
       end
 
       def build_router(definitions)
@@ -384,6 +399,14 @@ module Reprised
     set :erb, {}
     set :reload_templates, proc { development? }
     set :precompile_templates, proc { !development? && !test? }
+    # Cross-site request forgery protection (Reprised::CSRF): true turns away a browser's unsafe request from another
+    # origin, :report only reports it (report_forged_request!). Routes opt out with `csrf: false`.
+    set :csrf, false
+    # Origins ("https://accounts.example.com") whose requests the cross-origin check lets through.
+    set :csrf_trusted_origins, []
+    # Where the session keeps the CSRF token, and the param a form sends it back as (or the X-CSRF-Token header).
+    set :csrf_session_key, "_csrf_token"
+    set :csrf_param, "authenticity_token"
     # Also set env["sinatra.route"] ("GET /movie/:id") and env["sinatra.error"], for middleware written for Sinatra.
     set :sinatra_env, false
   end

@@ -335,9 +335,12 @@ module Reprised
 
       options = options.dup
       timeout = options.delete(:timeout)
+      csrf = options.delete(:csrf)
+      raise ArgumentError, "csrf: takes false or :token, not #{csrf.inspect}" unless CSRF::ROUTE_OPTIONS.include?(csrf)
+
       route = Route.new(
         verb:, path:, options: options.empty? ? NO_OPTIONS : options.freeze, conditions: take_pending_conditions,
-        action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location:, head:
+        action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location:, head:, csrf:
       )
       definitions(:routes) << route
       route
