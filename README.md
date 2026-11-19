@@ -343,8 +343,9 @@ post("/login/provider/callback", csrf: false) { ... }         # a route another 
   `http.CrossOriginProtection` makes.
 - A request with neither header isn't from a browser (a webhook, a script, an API client), so it isn't one that could
   be forged, and passes.
-- It runs after the before filters, right before the route's body, so the 403's error page has what the filters set
-  up. A request no route answers is a 404 as before.
+- It runs once a route matches, before the before filters, so a forged request runs none of the app's code but its
+  403's error handler. That handler doesn't have what the before filters set up (a current user, say): have it work
+  without. A request no route answers is a 404 as before.
 - `set :csrf, :report` lets every request through and reports the ones it would turn away: to `env["rack.errors"]`, or
   wherever the app's `self.report_forged_request!(error, env)` sends them. Run it in production first, to find the
   routes other sites post to before turning the check on.

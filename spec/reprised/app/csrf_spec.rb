@@ -106,16 +106,31 @@ RSpec.describe "CSRF protection" do
       end
     end
 
-    it "runs after the before filters, so an error page has what they set up" do
+    it "runs before the before filters, so a forged request runs none of them" do
+      ran = []
       csrf_app(handled: false, csrf: true) do
-        before { @setup = "set up" }
+        before { ran << :app_filter }
         post("/rate") { "rated" }
-        error(403) { "forbidden (#{@setup})" }
+        error(403) { "forbidden (filters: #{ran.inspect})" }
       end
 
       post "/rate", {}, cross_site
+      expect([status, body]).to eq([403, "forbidden (filters: [])"])
 
-      expect([status, body]).to eq([403, "forbidden (set up)"])
+      post "/rate", {}, { "HTTP_SEC_FETCH_SITE" => "same-origin" }
+      expect([body, ran]).to eq(["rated", [:app_filter]])
+    end
+
+    it "checks a route's token before its before filters too" do
+      ran = []
+      csrf_app do
+        before { ran << :filter }
+        post("/delete", csrf: :token) { "deleted" }
+      end
+
+      post "/delete"
+
+      expect([body, ran]).to eq(["forged: InvalidCSRFToken", []])
     end
 
     it "checks the route a request passes to" do

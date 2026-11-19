@@ -135,12 +135,12 @@ module Reprised
           next unless route.conditions.empty? || conditions_met?(route)
 
           matched(route)
+          check_forgery!(route) if @runtime.csrf || route.csrf
           if !@filtered
             matched_before_filters!
           elsif !(route.owner <= App) && !@filter_owners.include?(route.owner)
             controller_filters!(route.owner)
           end
-          check_forgery!(route) if @runtime.csrf || route.csrf
           # Sinatra sets it as the route's body starts, so it's unset for a request a before filter turned away.
           env["sinatra.route"] = route.to_s if @runtime.sinatra_env
           catch(:pass) do
@@ -175,9 +175,9 @@ module Reprised
       path.delete_suffix("/")
     end
 
-    # Reprised::CSRF's checks, after the before filters (so an error page has what they set up) and before the route's
-    # body: the cross-origin check, unless the route opts out, and the token, if the route needs one. A token the route
-    # asks for is checked whatever the csrf setting, :report included.
+    # Reprised::CSRF's checks, once a route matches and before its before filters, so a forged request runs none of
+    # the app's code but its error handler: the cross-origin check, unless the route opts out, and the token, if the
+    # route needs one. A token the route asks for is checked whatever the csrf setting, :report included.
     def check_forgery!(route)
       if (mode = @runtime.csrf) && route.csrf != false && CSRF.unsafe?(env) &&
           (reason = CSRF.cross_origin(env, @runtime.csrf_trusted_origins))
