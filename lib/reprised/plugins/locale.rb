@@ -48,6 +48,12 @@ module Reprised
       # Matches candidates (a client's language tags) to the available locales, remembering what each came to.
       class Matcher
         MAX_REMEMBERED = 2048
+        # Longer tags than any locale has (RFC 5646 asks for 35 characters to be supported), and more ranges than any
+        # browser sends, aren't looked at: a client could send any number, and each costs a lookup.
+        MAX_TAG_LENGTH = 64
+        MAX_RANGES = 32
+        # Longer headers are matched, but not remembered, so a client sending big ones can't fill the memory.
+        MAX_REMEMBERED_LENGTH = 512
 
         def initialize(available:, defaults:)
           @available = available
@@ -58,7 +64,7 @@ module Reprised
         # The available locale +candidate+ names, or nil.
         def match(candidate)
           candidate = candidate.to_s
-          return if candidate.empty?
+          return if candidate.empty? || candidate.length > MAX_TAG_LENGTH
 
           remembered = @remembered
           return remembered[candidate] if remembered.key?(candidate)
@@ -69,20 +75,24 @@ module Reprised
         # The first available locale an Accept-Language header names, or nil. A range that matches only by its language
         # takes that language in +region+ (the client's country, as "CA"), if it's available, ahead of its default.
         def match_accept_language(header, region = nil)
+          header = header.to_s
+          return first_available(header, region) if header.bytesize > MAX_REMEMBERED_LENGTH
+
           remembered = @remembered
           key = "accept-language:#{region}:#{header}"
           return remembered[key] if remembered.key?(key)
 
-          remember(key, Matcher.language_ranges(header).lazy.filter_map { lookup(it, region) }.first)
+          remember(key, first_available(header, region))
         end
 
         # An Accept-Language header's language ranges, most preferred first: in order of their q values, and of where
-        # they're listed among equal ones, without those at q=0 and *.
+        # they're listed among equal ones, without those at q=0 and *. Only the first MAX_RANGES are read, and a range
+        # longer than MAX_TAG_LENGTH is left out.
         def self.language_ranges(header)
-          ranges = header.to_s.split(",").each_with_index.filter_map do |entry, index|
+          ranges = header.to_s.split(",", MAX_RANGES + 1).first(MAX_RANGES).each_with_index.filter_map do |entry, index|
             range, *params = entry.split(";")
-            range = range.strip
-            next if range.empty? || range == "*"
+            range = range.to_s.strip
+            next if range.empty? || range == "*" || range.length > MAX_TAG_LENGTH
 
             q = params.find { it.strip.downcase.start_with?("q=") }&.then { it.strip[2..].to_f } || 1.0
             [range, q, index] if q > 0
@@ -91,6 +101,8 @@ module Reprised
         end
 
         private
+
+        def first_available(header, region) = Matcher.language_ranges(header).lazy.filter_map { lookup(it, region) }.first
 
         def lookup(candidate, region = nil)
           subtags = candidate.tr("_", "-").downcase.split("-")

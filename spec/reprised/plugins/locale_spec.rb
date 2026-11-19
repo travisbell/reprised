@@ -91,6 +91,26 @@ RSpec.describe Reprised::Plugins::Locale, type: :app do
 
       2.times { expect(locale_for("/", "HTTP_ACCEPT_LANGUAGE" => header)).to eq("fr-CA") }
     end
+
+    it "reads only the first ranges, skips empty ones and ones longer than any tag, and remembers only short headers" do
+      matcher = Reprised::Plugins::Locale::Matcher
+      expect(locale_for("/", "HTTP_ACCEPT_LANGUAGE" => "#{"xx," * matcher::MAX_RANGES}de-DE")).to eq("en")
+      expect(locale_for("/", "HTTP_ACCEPT_LANGUAGE" => "#{"de-#{"x" * 64}"},,pt-BR")).to eq("pt-BR")
+
+      long = "#{"x-" * 4000}x, fr-CA"
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      2.times { expect(locale_for("/", "HTTP_ACCEPT_LANGUAGE" => long)).to eq("fr-CA") }
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 0.1
+      expect(@app.middleware.first[2][:matcher].instance_variable_get(:@remembered).keys).not_to include(/x-x-x/)
+    end
+  end
+
+  it "gives a param, cookie, or callable's candidate longer than any tag no locale, quickly" do
+    locale_app(from: [:param, :cookie, ->(_) { "fr-#{"x-" * 4000}" }])
+
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    expect(locale_for("/?locale=#{"de-" * 4000}", "HTTP_COOKIE" => "locale=#{"de-" * 4000}")).to eq("en")
+    expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 0.1
   end
 
   it "takes an Accept-Language range that matches only by its language in the client's region, then its default" do
