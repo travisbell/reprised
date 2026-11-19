@@ -35,8 +35,9 @@ class Demos
 
     ROOM = Room.new
 
-    # Browsers send cookies with a WebSocket handshake from any site, so a socket should check where it came from.
-    before("/chat/socket") { halt(403, "Not from this site") unless same_origin? }
+    # Browsers send cookies with a WebSocket handshake from any site, so a websocket route turns away another site's
+    # (Reprised::CSRF's cross-origin check, a 403).
+    error(Reprised::CrossOriginRequest) { "Not from this site" }
 
     get "/chat" do
       @title = "WebSockets"
@@ -56,9 +57,5 @@ class Demos
     ensure
       ROOM.broadcast(type: "left", name:, count: ROOM.size)
     end
-
-    private
-
-    def same_origin? = env["HTTP_ORIGIN"].nil? || env["HTTP_ORIGIN"] == "#{request.scheme}://#{request.host_with_port}"
   end
 end

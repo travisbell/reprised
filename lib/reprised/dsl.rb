@@ -62,6 +62,10 @@ module Reprised
     # Other requests for the path move on to the next route. Options go to async-websocket's Rack adapter (handler:,
     # protocols:, extensions:), and the app must run under an Async server, such as Falcon.
     #
+    # A browser sends a page's cookies with a WebSocket upgrade whichever site the page is on, so the upgrade gets
+    # the cross-origin check (Reprised::CSRF) whatever the csrf setting: another site's page can't open a connection
+    # as the user. `csrf: false` lets other origins connect, and `set :csrf, :report` only reports them.
+    #
     #   websocket "/live/:channel" do |connection|
     #     while (message = connection.read)
     #       connection.write(message)
@@ -73,6 +77,7 @@ module Reprised
 
       require "async/websocket/adapters/rack"
       adapter = ::Async::WebSocket::Adapters::Rack
+      options = options.merge(csrf: adapter_options.delete(:csrf)) if adapter_options.key?(:csrf)
       handler = compile_method("WEBSOCKET #{path}", block)
       condition { adapter.websocket?(env) }
       add_route("GET", path, options, proc {
@@ -83,7 +88,7 @@ module Reprised
           scope.instance_variable_set(:@params, route_params)
           Reprised.with_current(scope) { Action.call(handler, scope, [connection]) }
         end)
-      }, source_location: block.source_location)
+      }, source_location: block.source_location, websocket: true)
     end
 
     # -- Filters --------------------------------------------------------------------------------------------------
@@ -329,7 +334,7 @@ module Reprised
     private
 
     # +source_location+ is where the route is defined: its block's, unless the block is one Reprised wraps it in.
-    def add_route(verb, path, options, block, head: false, source_location: block&.source_location)
+    def add_route(verb, path, options, block, head: false, source_location: block&.source_location, websocket: false)
       ensure_definable!
       raise ArgumentError, "#{verb} #{path} needs a block" unless block
 
@@ -340,7 +345,7 @@ module Reprised
 
       route = Route.new(
         verb:, path:, options: options.empty? ? NO_OPTIONS : options.freeze, conditions: take_pending_conditions,
-        action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location:, head:, csrf:
+        action: compile_method("#{verb} #{path}", block), timeout:, owner: self, source_location:, head:, csrf:, websocket:
       )
       definitions(:routes) << route
       route

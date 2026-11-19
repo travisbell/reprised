@@ -5,8 +5,11 @@ module Reprised
   # method its block compiled to, and its timeout in seconds, if any. +owner+ is the App or Controller that defined it.
   # +head+ is whether it also answers HEAD, as a GET route defined with `get` does (and one defined with `route` doesn't,
   # as in Sinatra::MultiRoute). +csrf+ is its `csrf:` option (Reprised::CSRF): false to skip the cross-origin check,
-  # :token to need a CSRF token too, or nil.
-  Route = Data.define(:verb, :path, :options, :conditions, :action, :timeout, :owner, :source_location, :head, :csrf) do
+  # :token to need a CSRF token too, or nil. +websocket+ is whether it's a `websocket` route, whose upgrade the
+  # cross-origin check covers too, whatever the csrf setting.
+  Route = Data.define(
+    :verb, :path, :options, :conditions, :action, :timeout, :owner, :source_location, :head, :csrf, :websocket
+  ) do
     def to_s = "#{verb} #{pattern}"
 
     # The path as written: a pattern ("/movie/:id"), a regexp's source, or an Array's patterns joined with " | ".

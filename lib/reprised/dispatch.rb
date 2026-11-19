@@ -135,7 +135,7 @@ module Reprised
           next unless route.conditions.empty? || conditions_met?(route)
 
           matched(route)
-          check_forgery!(route) if @runtime.csrf || route.csrf
+          check_forgery!(route) if @runtime.csrf || route.csrf || route.websocket
           if !@filtered
             matched_before_filters!
           elsif !(route.owner <= App) && !@filter_owners.include?(route.owner)
@@ -177,9 +177,11 @@ module Reprised
 
     # Reprised::CSRF's checks, once a route matches and before its before filters, so a forged request runs none of
     # the app's code but its error handler: the cross-origin check, unless the route opts out, and the token, if the
-    # route needs one. A token the route asks for is checked whatever the csrf setting, :report included.
+    # route needs one. A token the route asks for is checked whatever the csrf setting, :report included, and so is a
+    # websocket route's upgrade, which a browser makes with the user's cookies from any site's page.
     def check_forgery!(route)
-      if (mode = @runtime.csrf) && route.csrf != false && CSRF.unsafe?(env) &&
+      mode = @runtime.csrf || (route.websocket && true)
+      if mode && route.csrf != false && (route.websocket || CSRF.unsafe?(env)) &&
           (reason = CSRF.cross_origin(env, @runtime.csrf_trusted_origins))
         error = CrossOriginRequest.new(reason)
         raise error unless mode == :report

@@ -11,7 +11,8 @@ module Reprised
   # its Origin header with the request's host. A request with neither header isn't from a browser (a webhook, a
   # script, an API client), so it isn't one that could be forged, and passes. It needs no tokens, so it covers every
   # route at once. `set :csrf, :report` reports what it would turn away (App.report_forged_request!) and lets it
-  # through, to find the cross-origin requests an app needs before enforcing it.
+  # through, to find the cross-origin requests an app needs before enforcing it. A `websocket` route's upgrade gets the
+  # check whatever the setting, since a browser sends the user's cookies with one from any site's page.
   #
   # Tokens are the older defence, for the routes that want one as well: `csrf_token` (or `csrf_field`,
   # `csrf_meta_tags`) puts the session's token in a page, and `verify_csrf_token!` (or the route option

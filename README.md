@@ -346,6 +346,9 @@ post("/login/provider/callback", csrf: false) { ... }         # a route another 
 - It runs once a route matches, before the before filters, so a forged request runs none of the app's code but its
   403's error handler. That handler doesn't have what the before filters set up (a current user, say): have it work
   without. A request no route answers is a 404 as before.
+- A `websocket` route's upgrade gets the check whatever the `csrf` setting: a browser sends the page's cookies with a
+  WebSocket upgrade whichever site the page is on, so without it any site could open a connection as the user. Its
+  `csrf: false` lets other origins connect.
 - `set :csrf, :report` lets every request through and reports the ones it would turn away: to `env["rack.errors"]`, or
   wherever the app's `self.report_forged_request!(error, env)` sends them. Run it in production first, to find the
   routes other sites post to before turning the check on.
@@ -739,16 +742,10 @@ The route matches only upgrade requests; others for the path move on to the next
 request's scope, with the route's params, once the connection is upgraded. Options (`handler:`, `protocols:`,
 `extensions:`) go to async-websocket's Rack adapter.
 
-Browsers send cookies with a WebSocket handshake from any site, and neither Reprised nor async-websocket checks its
-`Origin`. A socket that relies on the session should check it, in a before filter:
-
-```ruby
-helpers do
-  def same_origin? = env["HTTP_ORIGIN"].nil? || env["HTTP_ORIGIN"] == "#{request.scheme}://#{request.host_with_port}"
-end
-
-before("/ws/*") { halt 403 unless same_origin? }
-```
+Browsers send cookies with a WebSocket handshake from any site, so a `websocket` route's upgrade gets the
+[cross-origin check](#csrf-protection) whatever the `csrf` setting: another site's page gets a 403 rather than a
+connection as the user. `csrf_trusted_origins` are let through, a client that isn't a browser (it sends no `Origin`)
+connects as before, and `websocket "/ws", csrf: false` lets every origin connect.
 
 Reprised takes no locks while serving requests: routers and templates are frozen, or replaced atomically. Its Falcon
 specs run with [Async::Safe](https://github.com/socketry/async-safe) enabled.

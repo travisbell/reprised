@@ -162,6 +162,31 @@ require "async/websocket/client"
           end
         end
       end
+
+      describe "from another site's page" do
+        # A new Array each time: the client adds the upgrade's own headers to the one it's given.
+        def cross_site = [["origin", "https://elsewhere.example"], ["sec-fetch-site", "cross-site"]]
+
+        def greet(url, path, headers)
+          Async::WebSocket::Client.connect(Async::HTTP::Endpoint.parse("#{url}#{path}"), headers:) { it.read.to_str }
+        rescue Async::WebSocket::ConnectionError => error
+          error.response.status
+        end
+
+        it "turns the upgrade away, whatever the csrf setting, unless the route opts out" do
+          app = Class.new(Reprised::App) do
+            websocket("/ws") { it.write("connected") && it.flush }
+            websocket("/open", csrf: false) { it.write("connected") && it.flush }
+          end
+
+          with_falcon(app, adapter:) do |_client, url|
+            expect(greet(url, "/ws", cross_site)).to eq(403)
+            expect(greet(url, "/ws", [["sec-fetch-site", "same-origin"]])).to eq("connected")
+            expect(greet(url, "/ws", [])).to eq("connected") # not a browser
+            expect(greet(url, "/open", cross_site)).to eq("connected")
+          end
+        end
+      end
     end
   end
 end
