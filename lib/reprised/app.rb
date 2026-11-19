@@ -344,8 +344,14 @@ module Reprised
         $stderr.puts(message)
       end
 
-      # A path +pattern+ matches, for checking which filters would apply to it, or nil if it can't be expanded.
+      # A path +pattern+ matches, for checking which filters would apply to it, or nil if it can't be expanded. A simple
+      # pattern's (nearly every route's) is built without compiling a Mustermann pattern, which is most of what
+      # finalizing a large app costs, and so most of a reload.
       def sample_path(pattern)
+        if settings.mustermann_opts.empty? && (simple = Router::SimplePattern.for(pattern))
+          return simple.sample_path
+        end
+
         mustermann = Mustermann.new(pattern, **settings.mustermann_opts)
         mustermann.expand(:ignore, mustermann.names.to_h { [it, it == "splat" ? ["x"] * pattern.count("*") : "x"] })
       rescue Mustermann::Error, ArgumentError

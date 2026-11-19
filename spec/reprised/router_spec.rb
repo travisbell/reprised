@@ -136,6 +136,15 @@ RSpec.describe Reprised::Router do
       expect(candidates.map { it.pattern.class }).to eq([Reprised::Router::SimplePattern, Mustermann::Sinatra])
     end
 
+    it "gives a simple pattern's sample path as Mustermann expands it, for the filter overlap check" do
+      ["/", "/movie", "/movie/", "/movie/?", "/movie/:id", "/tv/:id/season/:number/?", "/a.b/:c/", "/~x/:y_z"].each do |pattern|
+        mustermann = Mustermann.new(pattern)
+        expected = mustermann.expand(:ignore, mustermann.names.to_h { [it, "x"] })
+
+        expect(Reprised::Router::SimplePattern.for(pattern).sample_path).to eq(expected), pattern
+      end
+    end
+
     it "matches a filter without a path everywhere" do
       routes = router { add(:before, Reprised::Router::EVERY_PATH, :everywhere) }
 

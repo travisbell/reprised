@@ -189,6 +189,13 @@ module Reprised
       # The segments a router indexes it under: its literal segments, and nil for each param.
       def index_segments = @literals
 
+      # A path it matches, with "x" for each param, as Mustermann's expand(:ignore) gives it (with an optional trailing
+      # "/").
+      def sample_path
+        path = "/#{@segments.map { it.is_a?(Symbol) ? it.name : "x" }.join("/")}"
+        @trailing == :forbidden || @segments.empty? ? path : "#{path}/"
+      end
+
       # +segments+: Symbols for literal segments (as Symbols, so they can't be confused with param names) and Strings
       # for param names. +trailing+: whether the path may (:optional), must (:required), or mustn't (:forbidden) end
       # with "/".
