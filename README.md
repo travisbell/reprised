@@ -770,6 +770,16 @@ end
 A `middleware` block in the service can still wrap it with `super()`. Outside `falcon-host`, use
 `Falcon::Server.protocol_middleware(Reprised::Falcon::Adapter.new(app))`. `bench/adapter.rb` measures both adapters.
 
+Where its env differs from protocol-rack's, it's a fix:
+
+- A header sent many times is joined once all are read. protocol-rack joins as each comes, which copies the value so
+  far every time: 2,000 repeats of an 8 KB header took two seconds of the event loop, holding up every other request on
+  it. (protocol-http1 doesn't limit how many headers a request has, so put a proxy that does, such as nginx, in front of
+  a server that faces clients.)
+- A header named with `_` is dropped when its `-` spelling came too. The two share a CGI name (`X_Forwarded_For` and
+  `X-Forwarded-For` are both `HTTP_X_FORWARDED_FOR`), so a client could add its own value to one a proxy set and have
+  `request.ip` read it, as Puma's CVE-2024-45614 was.
+
 ## Plugins
 
 Plugins are optional, and load only when you use them: `plugin Reprised::Plugins::Name, **options`.

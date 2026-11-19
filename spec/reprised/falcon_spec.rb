@@ -94,6 +94,28 @@ RSpec.describe Reprised::Falcon::Adapter do
     expect(env["HTTP_CONTENT_TYPE"]).to eq("text/plain")
   end
 
+  it "drops a header named with _ when its - spelling came too, so a client can't add to a header a proxy set" do
+    app = ->(_env) { [200, {}, []] }
+    headers = [
+      ["x-forwarded-for", "10.0.0.1"], ["X_Forwarded_For", "6.6.6.6"], ["x_forwarded_proto", "https"],
+      ["x-forwarded-proto", "http"], ["x_custom", "a"], ["X_Custom", "b"]
+    ]
+    env = described_class.new(app).make_environment(build(headers:))
+
+    expect(env).to include("HTTP_X_FORWARDED_FOR" => "10.0.0.1", "HTTP_X_FORWARDED_PROTO" => "http", "HTTP_X_CUSTOM" => "a,b")
+  end
+
+  it "joins thousands of repeated headers in time proportional to their size" do
+    app = ->(_env) { [200, {}, []] }
+    request = build(headers: Array.new(2000) { ["x-pad", "a" * 8000] })
+
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    env = described_class.new(app).make_environment(request)
+
+    expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 0.5
+    expect(env["HTTP_X_PAD"].bytesize).to eq(2000 * 8001 - 1)
+  end
+
   it "closes an empty body, giving no rack.input" do
     env = expect_same_env(method: "POST", body: -> { Protocol::HTTP::Body::Buffered.new([]) })
     expect(env).not_to have_key("rack.input")

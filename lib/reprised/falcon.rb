@@ -6,9 +6,16 @@ module Reprised
   # Serving a Reprised app (or any Rack app) with Falcon.
   module Falcon
     # Falcon's Rack adapter (protocol-rack's, for Rack 3.1+), with the request's env built in about half the time and a
-    # sixth of the allocations. The env is the same, key for key. protocol-rack builds each header's CGI name
-    # ("HTTP_USER_AGENT") as three new strings, and finds content-type by downcasing every header name. This looks the
-    # common names up in a frozen table and reads the headers once.
+    # sixth of the allocations. protocol-rack builds each header's CGI name ("HTTP_USER_AGENT") as three new strings,
+    # and finds content-type by downcasing every header name. This looks the common names up in a frozen table and
+    # reads the headers once.
+    #
+    # The env is the same, key for key, but for two fixes:
+    # - A header sent many times is joined once, rather than as each comes, which takes time quadratic in its size (a
+    #   few thousand repeats took seconds). protocol-http1 doesn't limit how many headers a request has, so a server
+    #   that faces clients directly should have a proxy in front that does.
+    # - A header named with "_" is dropped when its "-" spelling came too (they share a CGI name), so a client can't add
+    #   its own value to one a proxy set, such as X-Forwarded-For.
     #
     # Use it with Falcon::Server.protocol_middleware(Reprised::Falcon::Adapter.new(app)), or include
     # Reprised::Falcon::Environment in a falcon.rb service.
@@ -50,6 +57,19 @@ module Reprised
       end.freeze
 
       def self.cgi_name(key) = CGI_NAMES[key] || "HTTP_#{key.upcase.tr("-", "_")}"
+
+      # A header's values, as one: cookies joined with ";", anything else with ",".
+      def self.join(name, values) = values.join(name == CGI::HTTP_COOKIE ? ";" : ",")
+
+      # Headers named with "_" (+fields+: CGI name, value, ...). One has the same CGI name as its "-" spelling
+      # (X_Forwarded_For and X-Forwarded-For are both HTTP_X_FORWARDED_FOR), so a client could add its own value to a
+      # header a proxy set, and have the app read it: a client IP, or a scheme. As Puma does, it's dropped when the "-"
+      # spelling came too, and otherwise kept (a client could have sent that spelling itself).
+      def self.add_underscored(env, fields)
+        values = {}
+        fields.each_slice(2) { |name, value| (values[name] ||= []) << value unless env.key?(name) }
+        values.each { |name, list| env[name] = join(name, list) }
+      end
 
       # protocol-rack's Rack31#make_environment and Generic#unwrap_request, in one pass. The order things are set in
       # matters where they overlap (HTTP_UPGRADE, HTTP_HOST), and is kept.
@@ -102,17 +122,26 @@ module Reprised
         end
 
         content_type = nil
+        # A header sent more than once is joined once all are read: joining as each comes copies the value so far each
+        # time, which for a client sending thousands is seconds of the event loop's time.
+        repeated = nil
+        underscored = nil
         request.headers.header do |key, value|
-          name = Adapter.cgi_name(key)
+          # (A common header's name, from the table, has no "_".)
+          name = (common = CGI_NAMES[key]) || Adapter.cgi_name(key)
           # (Not "content_type", which shares its CGI name but is an ordinary header to protocol-rack.)
           if name == HTTP_CONTENT_TYPE && key.casecmp?(CONTENT_TYPE)
             content_type = value
+          elsif !common && key.include?("_")
+            (underscored ||= []) << name << value
           elsif (current = env[name])
-            env[name] = name == CGI::HTTP_COOKIE ? "#{current};#{value}" : "#{current},#{value}"
+            ((repeated ||= {})[name] ||= [current]) << value
           else
             env[name] = value.to_s
           end
         end
+        repeated&.each { |name, values| env[name] = Adapter.join(name, values) }
+        Adapter.add_underscored(env, underscored) if underscored
 
         if content_type
           env[CGI::CONTENT_TYPE] = content_type
