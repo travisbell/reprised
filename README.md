@@ -725,7 +725,9 @@ get "/updates" do
 end
 ```
 
-It sets `text/event-stream`, `cache-control: no-cache`, and `x-accel-buffering: no`.
+It sets `text/event-stream`, `cache-control: no-cache`, and `x-accel-buffering: no`. A String's lines become data lines
+(a client ends a line at a lone `\r` too, so that splits them as well), so whatever a user wrote can't add fields or
+events of its own. An event name or id with a line break raises an `ArgumentError`.
 
 **WebSockets** are routes, with the [async-websocket](https://github.com/socketry/async-websocket) gem:
 

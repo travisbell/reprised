@@ -71,25 +71,37 @@ module Reprised
 
   # Server-Sent Events, written to a Stream: `sse.event(:update, data)`.
   class EventStream
+    # A client ends a line at "\r\n", "\n", or a "\r" on its own, so a field's value can't hold any of them: one would
+    # start another field, or another event.
+    LINE_BREAK = /[\r\n]/
+    ID_BREAK = /[\r\n\0]/ # A client ignores an id with a null byte.
+    private_constant :LINE_BREAK, :ID_BREAK
+
     def initialize(writer)
       @writer = writer
     end
 
-    # Sends an event. +data+ that isn't a String is sent as JSON; a multi-line String becomes several data lines.
+    # Sends an event. +data+ that isn't a String is sent as JSON; a multi-line String becomes several data lines (split
+    # at every line break a client reads as one, a lone "\r" included). A +name+ or +id+ with a line break raises an
+    # ArgumentError, since it would let whoever chose it add fields or events of their own.
     def event(name = nil, data = nil, id: nil)
       message = +""
-      message << "id: #{id}\n" if id
-      message << "event: #{name}\n" if name
-      (data.is_a?(String) ? data : JSON.generate(data)).each_line(chomp: true) { message << "data: #{it}\n" }
+      message << "id: #{field(id, ID_BREAK, :id)}\n" if id
+      message << "event: #{field(name, LINE_BREAK, :name)}\n" if name
+      each_line(data.is_a?(String) ? data : JSON.generate(data)) { message << "data: #{it}\n" }
       @writer << message << "\n"
       self
     end
 
     def data(data, id: nil) = event(nil, data, id:)
 
-    # A comment line, which clients ignore: useful to keep the connection open through proxies.
+    # A comment, which clients ignore: useful to keep the connection open through proxies. A multi-line one becomes
+    # several comment lines.
     def comment(text = "")
-      @writer << ": #{text}\n\n"
+      message = +""
+      each_line(text.to_s) { message << ": #{it}\n" }
+      message << ": \n" if message.empty?
+      @writer << message << "\n"
       self
     end
 
@@ -100,6 +112,20 @@ module Reprised
     end
 
     def closed? = @writer.closed?
+
+    private
+
+    # Yields +text+'s lines, as String#each_line(chomp: true) does, with a lone "\r" ending a line too.
+    def each_line(text, &)
+      text.each_line(chomp: true) { |line| line.include?("\r") ? line.split("\r", -1).each(&) : yield(line) }
+    end
+
+    def field(value, breaks, name)
+      value = value.to_s
+      return value unless breaks.match?(value)
+
+      raise ArgumentError, "an event's #{name} can't contain a line break#{" or null byte" if name == :id}: #{value.inspect}"
+    end
   end
 
   module Helpers

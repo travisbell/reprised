@@ -86,6 +86,36 @@ RSpec.describe "Reprised.current and streaming" do
     )
   end
 
+  it "keeps an event's data to its data lines, whatever line breaks it holds" do
+    mock_app do
+      get("/events") do
+        event_stream do |sse|
+          sse.data("hello\revent: admin\rdata: injected")
+          sse.data("crlf\r\nevent: admin")
+          sse.comment("one\rtwo\nthree")
+          sse.comment
+        end
+      end
+    end
+
+    get "/events"
+
+    expect(body).to eq(
+      "data: hello\ndata: event: admin\ndata: data: injected\n\n" \
+      "data: crlf\ndata: event: admin\n\n" \
+      ": one\n: two\n: three\n\n" \
+      ": \n\n"
+    )
+  end
+
+  it "won't send an event name or id with a line break, which would add fields of its own" do
+    events = Reprised::EventStream.new(+"")
+
+    expect { events.event("update\nevent: admin", "x") }.to raise_error(ArgumentError, /name can't contain a line break/)
+    expect { events.event(:update, "x", id: "1\rdata: evil") }.to raise_error(ArgumentError, /id can't contain/)
+    expect { events.event(:update, "x", id: "1\0") }.to raise_error(ArgumentError, /line break or null byte/)
+  end
+
   it "runs a route with a timeout without one, and warns, outside an Async server" do
     Reprised::RouteTimeout.instance_variable_set(:@warned, nil)
     mock_app { get("/slow", timeout: 0.01) { "done" } }
