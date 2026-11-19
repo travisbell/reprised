@@ -31,14 +31,22 @@ module Reprised
     # unique headers can only make as slow as not caching. Entries are frozen, so requests can share them.
     ACCEPT_CACHE = {} # rubocop:disable Style/MutableConstant -- a cache, mutable by design
     ACCEPT_CACHE_SIZE = 512
+    # A longer header than any client sends is parsed each time instead, so the cache can't hold big ones: the bound on
+    # how many it holds doesn't bound how much.
+    MAX_CACHED_LENGTH = 1024
+    # The media ranges read from a header. Clients send a handful; more only cost time to parse and to try.
+    MAX_ENTRIES = 64
 
     # preferred_type's answers, by Accept (cached, frozen) and then by types (a route's frozen provides: list).
     PREFERRED = {}.compare_by_identity
 
     class << self
-      # The Accept header's media ranges, best first. A missing or empty header accepts anything.
+      # The Accept header's media ranges (its first MAX_ENTRIES), best first. A missing or empty header accepts anything.
+      # A header longer than MAX_CACHED_LENGTH isn't cached, and its list isn't frozen, so preferred_type doesn't
+      # remember it either.
       def parse_accept(header)
         return ANY if header.nil? || header.empty?
+        return parse(header).dup if header.bytesize > MAX_CACHED_LENGTH
 
         ACCEPT_CACHE.fetch(header) do
           ACCEPT_CACHE.clear if ACCEPT_CACHE.size >= ACCEPT_CACHE_SIZE
@@ -92,7 +100,11 @@ module Reprised
       end
 
       def parse(header)
-        entries = header.scan(HEADER_VALUE_WITH_PARAMS).map { parse_entry(it) }
+        entries = []
+        header.scan(HEADER_VALUE_WITH_PARAMS) do |entry|
+          entries << parse_entry(entry)
+          break if entries.size >= MAX_ENTRIES
+        end
         entries.each_with_index.sort_by { |entry, index| [*entry.priority.map(&:-@), index] }.map!(&:first).freeze
       end
 

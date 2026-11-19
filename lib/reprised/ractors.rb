@@ -233,7 +233,7 @@ module Reprised
       # Negotiation's caches are constants, shared by every app, so once an app is ractorized each Ractor keeps its own.
       module NegotiationCaches
         def parse_accept(header)
-          return super if header.nil? || header.empty?
+          return super if header.nil? || header.empty? || header.bytesize > Reprised::Negotiation::MAX_CACHED_LENGTH
 
           cache = Ractors.local(Reprised::Negotiation, :accept)
           cache.fetch(header) do

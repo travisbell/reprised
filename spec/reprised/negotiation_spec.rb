@@ -24,6 +24,22 @@ RSpec.describe Reprised::Negotiation do
       expect(accept('text/html;profile="a\"b";q=0.5').first)
         .to have_attributes(type: "text/html", params: { "profile" => 'a"b' }, q: 0.5)
     end
+
+    it "reads only the first media ranges" do
+      ranges = accept("#{"text/plain;q=0.1," * described_class::MAX_ENTRIES}application/json")
+
+      expect(ranges.size).to eq(described_class::MAX_ENTRIES)
+      expect(ranges.map(&:type).uniq).to eq(["text/plain"])
+    end
+
+    it "caches a header no longer than any client sends, and not a longer one, whose ranges preferred_type won't keep" do
+      short = "text/html,application/json;q=0.9"
+      long = "#{"a" * described_class::MAX_CACHED_LENGTH},text/html"
+
+      expect(accept(short)).to be(accept(short.dup))
+      expect([accept(long).frozen?, described_class::ACCEPT_CACHE.key?(long)]).to eq([false, false])
+      expect(described_class.preferred_type(accept(long), ["text/html"].freeze)).to eq("text/html")
+    end
   end
 
   describe ".preferred_type" do
