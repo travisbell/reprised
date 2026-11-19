@@ -914,7 +914,8 @@ plugin Reprised::Plugins::Locale,
 
 Opt-in, and not loaded by `require "reprised"`:
 
-- **Request metrics:** `app.requests` and `app.request.duration`.
+- **Request metrics:** `app.requests` and `app.request.duration`, by method, status, and route pattern. A method HTTP
+  doesn't define is labelled `_OTHER` (and logged as `method_original`), so a client can't add series of its own.
 - **An access log line per request**, labelled by route pattern, at info (warn for a 4xx, and error for a 5xx).
 - **A stall detector** that logs when the event loop is blocked, naming the requests in flight.
 - **Reactor lag:** how late the event loop resumes (`reactor.lag`).

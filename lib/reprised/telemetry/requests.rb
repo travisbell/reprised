@@ -13,9 +13,10 @@ module Reprised
     #     fields: ->(env) { { account_id: env["myapp.account_id"] } },
     #     skip_paths: ["/healthcheck"]
     #
-    # Requests are labelled by method, status, status class, and route: the Reprised route's pattern ("/movie/:id"), so a
-    # route is one series whatever its ids, or "unmatched" for requests no route answered. The histogram has only the
-    # status class (and any of +histogram_labels+), since its series multiply by its buckets.
+    # Requests are labelled by method (_OTHER for one HTTP doesn't define), status, status class, and route: the Reprised
+    # route's pattern ("/movie/:id"), so a route is one series whatever its ids, or "unmatched" for requests no route
+    # answered. The histogram has only the status class (and any of +histogram_labels+), since its series multiply by
+    # its buckets.
     #
     # +filter+, +labels+, and +fields+ are called once the app has answered, so they see what it put in the env. filter
     # picks the requests to record (all of them without one); labels go on the counter and the log line, so keep them to
@@ -37,6 +38,14 @@ module Reprised
       MAX_USER_AGENT_LENGTH = 200
       MAX_REQUEST_ID_LENGTH = 200
       HISTOGRAM_LABELS = ["status_class"].freeze
+      # A request's method is labelled as one of these (HTTP's, and those Reprised routes), or as OTHER_METHOD: a client
+      # can send any method, and each would be a series of its own (OpenTelemetry's HTTP conventions do the same). The
+      # log line has the method it sent, as method_original.
+      METHODS = [
+        "CONNECT", "DELETE", "GET", "HEAD", "LINK", "OPTIONS", "PATCH", "POST", "PUT", "QUERY", "TRACE", "UNLINK"
+      ].freeze
+      OTHER_METHOD = "_OTHER"
+      MAX_METHOD_LENGTH = 32
 
       # The Console level of a request's log line: info, warn for a 4xx, or error for a 5xx.
       def self.log_level(status)
@@ -102,7 +111,7 @@ module Reprised
         return unless log
 
         fields = log_fields(env, status, headers, duration, labels, span, error)
-        message = "#{labels["method"]} #{env["PATH_INFO"]} #{status}"
+        message = "#{env["REQUEST_METHOD"].to_s[0, MAX_METHOD_LENGTH]} #{env["PATH_INFO"]} #{status}"
         if (callbacks = env["rack.response_finished"])
           callbacks << ->(*) { write(env, status, message, fields) }
         else
@@ -114,7 +123,7 @@ module Reprised
 
       def request_labels(env, status)
         labels = {
-          "method" => env["REQUEST_METHOD"].to_s,
+          "method" => METHODS.include?(method = env["REQUEST_METHOD"].to_s) ? method : OTHER_METHOD,
           "status" => status.to_s,
           "status_class" => "#{status / 100}xx",
           "route" => env["reprised.route"]&.pattern || UNMATCHED,
@@ -139,6 +148,7 @@ module Reprised
           user_agent: env["HTTP_USER_AGENT"]&.slice(0, MAX_USER_AGENT_LENGTH),
         }
         labels.each { |key, value| fields[key.to_sym] = value }
+        fields[:method_original] = env["REQUEST_METHOD"].to_s[0, MAX_METHOD_LENGTH] if labels["method"] == OTHER_METHOD
         @fields&.call(env)&.each { |key, value| fields[key.to_sym] = value }
         # An exception the app raised, or one it rescued and answered for (such as with a 500).
         error ||= env["reprised.error"]

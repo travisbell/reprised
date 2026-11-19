@@ -107,6 +107,15 @@ RSpec.describe Reprised::Telemetry do
       expect(histogram.count).to eq(3)
     end
 
+    it "labels a method HTTP doesn't define _OTHER, so a client can't make series of its own, and logs what it sent" do
+      app.call(env_for("/movie/550", method: "FOO1"))
+      app.call(env_for("/movie/550", method: "FOO2"))
+
+      expect(counted.map { [it.attributes["method"], it.value] }).to eq([["_OTHER", 2]])
+      expect(lines.map { |message, fields| [message, fields[:method], fields[:method_original]] })
+        .to eq([["FOO1 /movie/550 404", "_OTHER", "FOO1"], ["FOO2 /movie/550 404", "_OTHER", "FOO2"]])
+    end
+
     it "labels requests no route answered unmatched" do
       app.call(env_for("/nope"))
 
