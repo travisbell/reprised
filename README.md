@@ -252,6 +252,15 @@ cookies.delete(:theme)
 New cookies are `httponly`, `secure` on HTTPS, for path `/`, and for the request's host (none for localhost). The
 `cookie_options` setting adds to those defaults: `set :cookie_options, { same_site: :lax }`.
 
+These are sinatra-contrib's defaults, kept so that cookies an app set before still match (a browser deletes a cookie
+only for the same domain it was set with). For a new app, two are worth changing:
+
+- `domain:` the request's host gives a `Domain` attribute, which sends the cookie to every subdomain too, and the host
+  comes from `X-Forwarded-Host` when a proxy (or a client) sends one. `set :cookie_options, { domain: nil }` keeps a
+  cookie to the host that set it.
+- `same_site:` there's none, so a browser that doesn't default to `Lax` sends the cookie with other sites' requests.
+  `same_site: :lax` stops that for everything but top-level navigation.
+
 ## Filters
 
 `before` filters run before the matched route's block, and `after` filters after it, including after a `halt`. A
