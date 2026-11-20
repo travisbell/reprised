@@ -62,7 +62,9 @@ module Reprised
       halt(*args)
     end
 
-    # An absolute URL for +addr+ (default: the current path), taking proxies into account.
+    # An absolute URL for +addr+ (default: the current path), taking proxies into account. A URL with a scheme is
+    # returned as it is. Without +absolute+, the path's leading slashes (and backslashes, which browsers read as
+    # slashes) become one, so "//elsewhere.example" stays on this site rather than naming another host.
     def uri(addr = nil, absolute = true, add_script_name = true)
       return addr if addr.to_s.match?(/\A[a-z][a-z0-9+.-]*:/i)
 
@@ -74,7 +76,8 @@ module Reprised
       parts = [host]
       parts << request.script_name.to_s if add_script_name
       parts << (addr || request.path_info).to_s
-      File.join(parts)
+      url = File.join(parts)
+      absolute ? url : url.sub(%r{\A[/\\]{2,}}, "/")
     end
     alias_method :url, :uri
     alias_method :to, :uri

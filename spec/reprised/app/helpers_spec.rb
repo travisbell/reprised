@@ -74,6 +74,19 @@ RSpec.describe "Helpers" do
 
       expect(response_headers["location"]).to eq("https://example.org:8443/there")
     end
+
+    it "keeps a path that starts with slashes or backslashes on this site, absolute or not" do
+      mock_app { get("/go") { redirect params[:to] } }
+      locations = -> do
+        ["//elsewhere.example/x", "/\\elsewhere.example", "\\\\elsewhere.example", "///elsewhere.example"].map do |to|
+          get("/go", to:) && response_headers["location"]
+        end
+      end
+
+      expect(locations.()).to all(start_with("http://example.org/"))
+      @app.set(:absolute_redirects, false)
+      expect(locations.()).to eq(["/elsewhere.example/x", "/elsewhere.example", "/elsewhere.example", "/elsewhere.example"])
+    end
   end
 
   describe "content_type" do

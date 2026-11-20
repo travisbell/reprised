@@ -222,7 +222,7 @@ ends early.
 | `expires 300, :public` | sets Expires and Cache-Control's max-age |
 | `send_file path, filename:, disposition:, type:, last_modified:, status:` | sends a file (ranges and HEAD included), or 404s |
 | `attachment "report.csv"` | sets Content-Disposition, and the content type from the extension |
-| `uri("/x")` (`url`, `to`) | an absolute URL, taking proxies into account |
+| `uri("/x")` (`url`, `to`) | an absolute URL, taking proxies into account (see below) |
 | `mime_type :json` | the media type for an extension |
 | `not_found "body"`, `error 403, "body"` | stops with that status |
 | `success?`, `redirect?`, `client_error?`, `server_error?`, `not_found?`, ... | checks the status |
@@ -232,6 +232,13 @@ ends early.
 
 As in Sinatra, `Rack::Utils`' functions (`escape_html`, `escape`, `unescape`, `build_query`, `parse_query`, ...) are
 there too, as private methods.
+
+**Redirects and URLs:** `redirect` and `uri` pass a URL with a scheme through as it is, so `redirect params[:to]` is an
+open redirect: check it's a path of your own first. A path's leading slashes and backslashes become one, so
+`//elsewhere.example` stays on the site. An absolute URL's host is the request's, which Rack takes from
+`X-Forwarded-Host` or `Host`, both of which a client can set: a cache in front of the app that doesn't key on them
+could keep a redirect to another host. Put a proxy in front that sets them, or check the host (Rack::Protection's
+`HostAuthorization`), if that matters.
 
 **Cookies:** `cookies` reads the request's cookies and sets new ones, as sinatra-contrib's does:
 
