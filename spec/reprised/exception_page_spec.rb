@@ -102,6 +102,29 @@ RSpec.describe "The exception page" do
     expect(body).to include("<h1>KeyError</h1>")
   end
 
+  it "shows behind a proxy only when every address it forwarded the request for is allowed too" do
+    movie_app
+
+    shown = ->(headers) { html_get("/movie/550", { "REMOTE_ADDR" => "127.0.0.1" }.merge(headers)) && body.include?("<h1>KeyError</h1>") }
+
+    expect(shown.({ "HTTP_X_FORWARDED_FOR" => "127.0.0.1" })).to be(true)
+    expect(shown.({ "HTTP_FORWARDED" => 'for="[::1]:4711";proto=http, for=127.0.0.1' })).to be(true)
+    expect(shown.({ "HTTP_X_FORWARDED_FOR" => "203.0.113.9" })).to be(false)
+    expect(shown.({ "HTTP_X_FORWARDED_FOR" => "127.0.0.1, 203.0.113.9" })).to be(false) # the proxy added the real one
+    expect(shown.({ "HTTP_X_REAL_IP" => "203.0.113.9" })).to be(false)
+    expect(shown.({ "HTTP_FORWARDED" => "for=203.0.113.9:80" })).to be(false)
+    expect(shown.({ "HTTP_FORWARDED" => "for=unknown" })).to be(false)
+  end
+
+  it "masks headers whose names are spelled with hyphens" do
+    movie_app
+    key = %w[sk live 123].join("_")
+
+    html_get "/movie/550", "HTTP_X_API_KEY" => key
+
+    expect(body).not_to include(key)
+  end
+
   it "shows to the other addresses it's given" do
     movie_app(show_exceptions_from: ["10.0.0.0/8"])
 

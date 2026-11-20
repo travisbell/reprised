@@ -318,8 +318,14 @@ page rather than the app's error handlers, as Sinatra's `show_exceptions` does:
 - The request: params, headers, session keys, and the Rack env, with passwords, tokens, cookies, and the session
   masked. A Copy as text button copies it all, and XHR and JSON requests get it as plain text.
 
-It's shown only to requests from `show_exceptions_from` (by `REMOTE_ADDR`, loopback by default):
-`set :show_exceptions_from, ["127.0.0.0/8", "::1/128", "172.16.0.0/12"]` adds Docker's networks.
+It's shown only to requests from `show_exceptions_from` (loopback by default):
+`set :show_exceptions_from, ["127.0.0.0/8", "::1/128", "172.16.0.0/12"]` adds Docker's networks. That's `REMOTE_ADDR`,
+and every address a proxy says it forwarded the request for (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`, and the
+like): behind a proxy on the same host, `REMOTE_ADDR` is loopback for every visitor. An address that doesn't parse
+isn't allowed.
+
+The environment is `development` unless `APP_ENV` or `RACK_ENV` says otherwise, as in Sinatra, so set one in
+production: in development the page shows each exception's local variables and source.
 `set :show_exceptions, :after_handler` lets the app's handlers answer first, and shows the page when none does.
 
 ## CSRF protection

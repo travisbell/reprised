@@ -18,7 +18,7 @@ module Reprised
     # Longest an inspected value is shown.
     MAX_INSPECT = 600
     # Params, headers, and cookies whose values are masked.
-    SENSITIVE = /pass(word)?|secret|token|api_?key|auth|cookie|session|csrf|otp/i
+    SENSITIVE = /pass(word)?|secret|token|api[-_]?key|auth|cookie|session|csrf|otp/i
     EDITORS = {
       vscode: "vscode://file%{file}:%{line}",
       cursor: "cursor://file%{file}:%{line}",
@@ -29,6 +29,12 @@ module Reprised
       macvim: "mvim://open?url=file://%{file}&line=%{line}"
     }.freeze
     LOOPBACK = ["127.0.0.0/8", "::1/128"].freeze
+    # The headers proxies put the client's address in, besides Forwarded.
+    FORWARDED_FOR = [
+      "HTTP_X_FORWARDED_FOR", "HTTP_X_REAL_IP", "HTTP_CLIENT_IP", "HTTP_TRUE_CLIENT_IP", "HTTP_CF_CONNECTING_IP",
+      "HTTP_FASTLY_CLIENT_IP"
+    ].freeze
+    FORWARDED_PAIR = /(?:\A|[;,\s])for=("[^"]*"|[^;,\s]*)/i
 
     Frame = Data.define(:path, :line, :label, :app) do
       def to_s = "#{path}:#{line}:in '#{label}'"
@@ -46,13 +52,33 @@ module Reprised
         @capture.enable unless @capture.enabled?
       end
 
-      # Whether +env+'s client (REMOTE_ADDR, not a forwarded address a client could set) is one of +allowed+.
+      # Whether +env+'s client is one of +allowed+: its REMOTE_ADDR, and every address a proxy says it forwarded the
+      # request for. Behind a proxy on the same host, REMOTE_ADDR is loopback whoever the client is, so the proxy's
+      # headers have to be allowed too. A client can't get in by sending them itself: a proxy adds the real address to
+      # what the client sent (or replaces it). An address that doesn't parse ("unknown", a Forwarded header's obfuscated
+      # name) isn't allowed.
       def allowed?(env, allowed)
-        address = IPAddr.new(env["REMOTE_ADDR"].to_s)
-        address = address.native
-        allowed.any? { it.include?(address) }
-      rescue IPAddr::Error
+        client_addresses(env).all? do |text|
+          address = IPAddr.new(text).native
+          allowed.any? { it.include?(address) }
+        end
+      rescue IPAddr::Error, ArgumentError
         false
+      end
+
+      # REMOTE_ADDR, and the addresses in the headers proxies forward a client's address in.
+      def client_addresses(env)
+        addresses = [env["REMOTE_ADDR"].to_s]
+        FORWARDED_FOR.each { |key| env[key]&.split(",")&.each { addresses << it.strip } }
+        env["HTTP_FORWARDED"]&.scan(FORWARDED_PAIR) { addresses << forwarded_address(Regexp.last_match(1)) }
+        addresses
+      end
+
+      private def forwarded_address(node)
+        node = node.delete('"')
+        return Regexp.last_match(1) if node =~ /\A\[([^\]]*)\](?::\d+)?\z/ # [IPv6]:port
+
+        node.sub(/\A([\d.]+):\d+\z/, '\1') # IPv4:port
       end
 
       def ranges(addresses) = Array(addresses).map { IPAddr.new(it.to_s) }.freeze
