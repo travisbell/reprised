@@ -1000,6 +1000,8 @@ end
 
 With a `Reprised::Application`, `config.reload = true` does this. The loader needs `enable_reloading` before its
 `setup`. A reload that raises (a syntax error, say) answers with the error, and is tried again with the next request.
+The error and its backtrace are shown only to `show_errors_from` (loopback by default, by the exception page's rules;
+`Reprised::Application` passes it `config.show_exceptions_from`); other clients get a 500 that points to the log.
 config.ru and its middleware aren't reloaded. The stall detector doesn't report the time spent loading code.
 
 ## Ractors

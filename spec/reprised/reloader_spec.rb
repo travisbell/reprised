@@ -24,7 +24,10 @@ RSpec.describe Reprised::Reloader do
     File.utime(@clock, @clock, path)
   end
 
-  def request(reloader, path, env = Rack::MockRequest.env_for(path))
+  # From the machine the server runs on, as a developer's browser is.
+  def env_for(path, **options) = Rack::MockRequest.env_for(path, "REMOTE_ADDR" => "127.0.0.1", **options)
+
+  def request(reloader, path, env = env_for(path))
     status, _headers, body = reloader.call(env)
     content = +""
     body.each { content << it }
@@ -96,7 +99,7 @@ RSpec.describe Reprised::Reloader do
       request(reloader, "/")
       write("web.rb", "class #{ns}::Web < Reprised::App\n  get(\"/\") {\n")
 
-      env = Rack::MockRequest.env_for("/")
+      env = env_for("/")
       status, body = request(reloader, "/", env)
       expect(status).to eq(500)
       expect(body).to start_with("Couldn't reload #{ns}::Web: SyntaxError")
@@ -106,6 +109,17 @@ RSpec.describe Reprised::Reloader do
       write("web.rb", "class #{ns}::Web < Reprised::App\n  get(\"/\") { \"fixed\" }\nend\n")
 
       expect(request(reloader, "/")).to eq([200, "fixed"])
+    end
+
+    it "keeps the error to the log for a client its addresses don't take in" do
+      write("web.rb", "class #{ns}::Web < Reprised::App\n  get(\"/\") {\n")
+
+      env = env_for("/", "REMOTE_ADDR" => "127.0.0.1", "HTTP_X_FORWARDED_FOR" => "203.0.113.9")
+      expect(request(reloader, "/", env)).to eq([500, "Couldn't reload the app: the error is in the server's log.\n"])
+      expect(env["rack.errors"].string).to include("SyntaxError")
+
+      docker = described_class.new("#{ns}::Web", loader:, show_errors_from: ["172.16.0.0/12"])
+      expect(request(docker, "/", env_for("/", "REMOTE_ADDR" => "172.17.0.1")).last).to include("SyntaxError")
     end
 
     it "answers with the error when the app doesn't load the first time" do
@@ -136,7 +150,7 @@ RSpec.describe Reprised::Reloader do
     it "reloads anyway once it has waited long enough" do
       reloader = described_class.new("#{ns}::Web", loader: loader.tap(&:setup), wait: 0.02)
       request(reloader, "/")
-      env = Rack::MockRequest.env_for("/")
+      env = env_for("/")
 
       Sync do
         slow = Async { request(reloader, "/slow") }

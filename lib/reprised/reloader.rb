@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "exception_page"
+
 module Reprised
   # A Rack app for development that reloads the app's code when it changes, before the next request:
   #
@@ -49,12 +51,16 @@ module Reprised
         loaded!
       end
     end
-    def initialize(app, loader: nil, files: [], wait: 10)
+    # +show_errors_from+ are the addresses a failed reload's error and backtrace are shown to, as the exception page's
+    # show_exceptions_from setting (Reprised::ExceptionPage.allowed?); others get a 500 without them. The log has it
+    # either way.
+    def initialize(app, loader: nil, files: [], wait: 10, show_errors_from: ExceptionPage::LOOPBACK)
       raise ArgumentError, "give a Zeitwerk loader, files, or both" if loader.nil? && files.empty?
       if loader.respond_to?(:reloading_enabled?) && !loader.reloading_enabled?
         raise ArgumentError, "enable reloading on the Zeitwerk loader (loader.enable_reloading) before its setup"
       end
 
+      @show_errors_from = ExceptionPage.ranges(show_errors_from)
       @app_name = app.to_s
       @loader = loader
       @patterns = files.map { File.expand_path(it) }
@@ -143,8 +149,12 @@ module Reprised
 
     def reload_failed(env, error)
       log(env, "Couldn't reload #{@app_name}: #{error.class}: #{error.message}")
-      body = +"Couldn't reload #{@app_name}: #{error.class}\n\n#{error.message}\n\n"
-      error.backtrace&.first(20)&.each { body << it << "\n" }
+      if ExceptionPage.allowed?(env, @show_errors_from)
+        body = +"Couldn't reload #{@app_name}: #{error.class}\n\n#{error.message}\n\n"
+        error.backtrace&.first(20)&.each { body << it << "\n" }
+      else
+        body = "Couldn't reload the app: the error is in the server's log.\n"
+      end
       [500, { "content-type" => "text/plain; charset=utf-8", "content-length" => body.bytesize.to_s }, [body]]
     end
 

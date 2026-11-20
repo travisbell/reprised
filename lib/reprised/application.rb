@@ -91,7 +91,8 @@ module Reprised
 
         require_relative "reloader"
         files = config.reload_files.map { File.expand_path(it, config.root) }
-        Reloader.new(config.app, loader: config.loader, files:)
+        # A reload that fails shows its error to the addresses the exception page shows to.
+        Reloader.new(config.app, loader: config.loader, files:, show_errors_from: config.show_exceptions_from)
       end
 
       # Prepares the app in the server's parent process, before it forks workers: boots, runs the before_fork hooks,
