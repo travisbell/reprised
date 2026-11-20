@@ -50,6 +50,19 @@ RSpec.describe "Static files" do
     end
   end
 
+  it "leaves dotfiles, and what's in dot folders, to the routes, but serves .well-known" do
+    public_app
+
+    ["/.hidden.txt", "/%2Ehidden.txt", "/.config/settings.txt", "/css/../.hidden.txt"].each do |path|
+      get path
+      expect(body).not_to eq("hidden\n"), "#{path} was served"
+      expect(last_request.env["reprised.static_file"]).to be_nil
+    end
+
+    get "/.well-known/security.txt"
+    expect(body).to eq("Contact: mailto:security@example.org\n")
+  end
+
   it "unescapes the path, and serves a directory's path to the routes" do
     public_app
 

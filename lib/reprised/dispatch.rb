@@ -28,7 +28,9 @@ module Reprised
     NO_VALUES = [].freeze
     NOT_FOUND_BODY = "<h1>Not Found</h1>"
     BAD_REQUEST_BODY = "<h1>Bad Request</h1>"
-    private_constant :NO_VALUES, :NOT_FOUND_BODY, :BAD_REQUEST_BODY
+    # A path segment that starts with ".", other than "/.well-known/" (a backslash is a separator on Windows).
+    HIDDEN_SEGMENT = %r{[/\\]\.(?!well-known(?:[/\\]|\z))}
+    private_constant :NO_VALUES, :NOT_FOUND_BODY, :BAD_REQUEST_BODY, :HIDDEN_SEGMENT
 
     # Single-owner: one request, on one fiber. Async::Safe (when enabled) reports any concurrent use.
     ASYNC_SAFE = false
@@ -218,10 +220,14 @@ module Reprised
     end
 
     # The file in the public folder the path names, as Sinatra finds it: unescaped, with no null bytes, and inside the
-    # folder.
+    # folder. Unlike Sinatra, a path with a segment that starts with "." (.env, .git/config) isn't served, apart from
+    # .well-known's (RFC 8615): a dotfile is more often left there by mistake than put there to be served.
     def static_file
       folder = @runtime.public_folder
-      file = "#{folder}#{URI::RFC2396_PARSER.unescape(path)}"
+      unescaped = URI::RFC2396_PARSER.unescape(path)
+      return if HIDDEN_SEGMENT.match?(unescaped)
+
+      file = "#{folder}#{unescaped}"
       return unless Rack::Utils.valid_path?(file)
 
       file = File.expand_path(file)

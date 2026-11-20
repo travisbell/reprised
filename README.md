@@ -534,6 +534,10 @@ environment matches, at definition time, and `development?`, `production?`, and 
 **Public files:** as in Sinatra, a GET or HEAD request for a file in the public folder is answered with the file
 (`send_file`, with `static_cache_control` and `static_headers`) before any filter runs, and after filters don't run for
 it. Paths are unescaped, and must stay inside the folder. Other requests, and paths with no file, go to the routes.
+Unlike Sinatra, a path with a segment that starts with `.` (`/.env`, `/.git/config`) isn't served, apart from
+`/.well-known/`'s: a dotfile in the public folder is more often a mistake than meant to be served. Symlinks are
+followed, as Sinatra and most file servers do (a deploy may link `public/uploads` to a shared folder), so don't link
+anything into the public folder that shouldn't be public.
 
 Sinatra's server, session, protection, and logging settings (`:sessions`, `:protection`, `:logging`, `:port`, `:lock`,
 `:threaded`, and the rest) do nothing in Reprised, and warn when set: use Rack middleware in config.ru instead.
@@ -1068,6 +1072,8 @@ Most route code moves over unchanged. What changes:
   modules are included in.
 - **Specs that stub the app's instances** (`allow_any_instance_of(App)`) need the controller instead: a controller's
   routes run in an instance of the controller.
+- **Dotfiles in the public folder aren't served** (`/.env`, `/.git/config`), apart from `/.well-known/`'s. A route can
+  serve one that's meant to be.
 - **Protection isn't on by default.** Sinatra adds `Rack::Protection` (frame options, origin checks, JSON CSRF, path
   traversal, IP spoofing, and XSS headers) unless it's disabled, and host authorization in development. Reprised doesn't.
   `set :csrf, true` ([CSRF protection](#csrf-protection)) does the job of its origin check (`HttpOrigin`), for every
