@@ -113,6 +113,23 @@ RSpec.describe Reprised::Plugins::Locale, type: :app do
     expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 0.1
   end
 
+  it "gives a candidate that isn't ASCII, or isn't valid UTF-8, no locale, and goes on to the next source" do
+    invalid = "\xFFde-DE".dup.force_encoding(Encoding::UTF_8)
+    locale_app(from: [:param, :cookie, ->(_) { [invalid, "fr-FR"] }])
+
+    expect(locale_for("/?locale=%FF")).to eq("fr-FR")
+    expect(locale_for("/?locale=d%C3%A9-DE")).to eq("fr-FR")
+    expect(locale_for("/", "HTTP_COOKIE" => "locale=%FFde-DE")).to eq("fr-FR")
+  end
+
+  it "skips Accept-Language ranges that aren't ASCII, in a header that isn't valid UTF-8" do
+    locale_app(from: [:accept_language])
+
+    header = "\xFFde-DE,d\xC3\xA9-DE;q=0.9,pt-BR;q=0.8".dup.force_encoding(Encoding::UTF_8)
+    expect(locale_for("/", "HTTP_ACCEPT_LANGUAGE" => header)).to eq("pt-BR")
+    expect(locale_for("/", "HTTP_ACCEPT_LANGUAGE" => header)).to eq("pt-BR") # remembered
+  end
+
   it "takes an Accept-Language range that matches only by its language in the client's region, then its default" do
     locale_app(from: [:param, :accept_language], defaults: { "es" => "es-ES", "fr" => "fr-FR" }, region: ->(request) { request.get_header("HTTP_X_COUNTRY") })
 

@@ -68,6 +68,9 @@ module Reprised
 
           remembered = @remembered
           return remembered[candidate] if remembered.key?(candidate)
+          # A language tag is ASCII: anything else (a query or cookie with invalid UTF-8, as %FF) names no locale. It's
+          # never remembered, so it's checked after the lookup, whose hash has already found whether it's ASCII.
+          return unless candidate.ascii_only?
 
           remember(candidate, lookup(candidate))
         end
@@ -87,12 +90,13 @@ module Reprised
 
         # An Accept-Language header's language ranges, most preferred first: in order of their q values, and of where
         # they're listed among equal ones, without those at q=0 and *. Only the first MAX_RANGES are read, and a range
-        # longer than MAX_TAG_LENGTH is left out.
+        # longer than MAX_TAG_LENGTH or that isn't ASCII is left out. The header is read as bytes, so one that isn't
+        # valid in its encoding can't raise.
         def self.language_ranges(header)
-          ranges = header.to_s.split(",", MAX_RANGES + 1).first(MAX_RANGES).each_with_index.filter_map do |entry, index|
+          ranges = header.to_s.b.split(",", MAX_RANGES + 1).first(MAX_RANGES).each_with_index.filter_map do |entry, index|
             range, *params = entry.split(";")
             range = range.to_s.strip
-            next if range.empty? || range == "*" || range.length > MAX_TAG_LENGTH
+            next if range.empty? || range == "*" || range.length > MAX_TAG_LENGTH || !range.ascii_only?
 
             q = params.find { it.strip.downcase.start_with?("q=") }&.then { it.strip[2..].to_f } || 1.0
             [range, q, index] if q > 0
