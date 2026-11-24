@@ -69,4 +69,59 @@ RSpec.describe Reprised::Plugins::OpenTelemetry do
 
     expect(span.attributes).not_to have_key("http.route")
   end
+
+  context "with trace_header" do
+    let(:options) { { trace_header: "x-trace-id" } }
+
+    it "sends the request's trace id" do
+      get "/movie/550"
+
+      expect(last_response.headers["x-trace-id"]).to eq(span.hex_trace_id)
+    end
+  end
+
+  context "with log_context" do
+    let(:log_context) do
+      Module.new do
+        def self.with(attributes)
+          previous = Fiber[:test_log_context]
+          Fiber[:test_log_context] = attributes
+          yield
+        ensure
+          Fiber[:test_log_context] = previous
+        end
+
+        def self.route = Fiber[:test_log_context]&.fetch("http.route")&.call
+      end
+    end
+    let(:options) { { log_context: log_context } }
+
+    it "runs the request with the route that's answering, and sends no trace id outside a trace" do
+      context = log_context
+      seen = []
+      reprised_app = Class.new(Reprised::App) do
+        set :raise_errors, false
+        set :dump_errors, false
+        plugin Reprised::Plugins::OpenTelemetry, log_context: context, trace_header: "x-trace-id"
+        before { seen << context.route }
+        get("/movie/:id") do
+          seen << context.route
+          pass if params[:id] == "top-rated"
+          "movie"
+        end
+        get("/movie/top-rated") do
+          seen << context.route
+          "top rated"
+        end
+      end
+      @app = reprised_app
+
+      get "/movie/top-rated"
+
+      expect(last_response.body).to eq("top rated")
+      expect(seen).to eq(["/movie/:id", "/movie/:id", "/movie/top-rated"])
+      expect(context.route).to be_nil
+      expect(last_response.headers).not_to have_key("x-trace-id") # no tracer, so no trace
+    end
+  end
 end

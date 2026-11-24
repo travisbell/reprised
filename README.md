@@ -902,6 +902,11 @@ The span gets `http.route` (`/movie/:id`) and the name `GET /movie/:id`, unless 
 route) says otherwise. A 5xx's exception is recorded on the span, which is marked as an error, unless the exception is
 one of `skip_errors` (or a subclass).
 
+`trace_header:` names a response header to send the request's trace id in, for a proxy in front of the app to log, so
+its access log leads to what the app logged for the request. `log_context:` is the app's store of attributes for log
+lines, anything with `with(attributes) { }`: the request runs in it with `http.route`, a callable giving the pattern of
+the route answering as each line is written.
+
 ### Locale
 
 The request's locale, from where the client says it is, as `I18n.locale` for the request. Needs the i18n gem.
