@@ -25,7 +25,9 @@ module Reprised
         def phlex(component, layout: nil, **options)
           component = component.new if component.is_a?(Class)
           assigns = options[:assigns] || options[:locals] || {}
-          output = settings.phlex_rails ? phlex_view_context(assigns).render(renderable: component) : component.call(context: { reprised: self })
+          # render_in, as the view context's render(renderable:) would call, without ActionView's template renderer and
+          # its instrumentation around it, which cost more than rendering a small component.
+          output = settings.phlex_rails ? component.render_in(phlex_view_context(assigns)) : component.call(context: { reprised: self })
           output = output.html_safe if output.respond_to?(:html_safe)
           layout ? render(:erb, layout, { layout: false }, assigns) { output } : output
         end
